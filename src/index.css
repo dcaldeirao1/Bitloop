@@ -1,0 +1,229 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #f6f7f6;
+  --color-surface: #ffffff;
+  --color-ink: #0b0f0e;
+  --color-ink-soft: #3a4542;
+  --color-muted: #737c79;
+  --color-line: #e4e8e6;
+  --color-line-strong: #cfd6d2;
+  --color-teal: #0b6b61;
+  --color-teal-deep: #085048;
+  --color-teal-soft: #eaf7f4;
+  --color-mango: #c96a20;
+  --color-mango-soft: #fff6ee;
+  --color-if: #0b6b61;
+  --color-if-bg: #eaf7f4;
+  --color-then: #c96a20;
+  --color-then-bg: #fff6ee;
+  --color-danger: #b42318;
+  --color-danger-soft: #fef3f2;
+  --color-danger-line: #fecdca;
+  --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+html.dark {
+  --color-bg: #0c100f;
+  --color-surface: #141a18;
+  --color-ink: #eef2f0;
+  --color-ink-soft: #b4beb9;
+  --color-muted: #8a948f;
+  --color-line: #24302c;
+  --color-line-strong: #35433e;
+  --color-teal: #3dbaa8;
+  --color-teal-deep: #7ad4c6;
+  --color-teal-soft: #14332e;
+  --color-mango: #e0924a;
+  --color-mango-soft: #2a1f14;
+  --color-if: #3dbaa8;
+  --color-if-bg: #14332e;
+  --color-then: #e0924a;
+  --color-then-bg: #2a1f14;
+  --color-danger: #f97066;
+  --color-danger-soft: #2a1514;
+  --color-danger-line: #5c2b28;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-teal) 22%, transparent);
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-in {
+  animation: fade-up 0.55s ease-out both;
+}
+
+.animate-in-late {
+  animation: fade-up 0.65s ease-out 0.12s both;
+}
+
+.block-if {
+  background: var(--color-if-bg);
+  border: 1px solid color-mix(in srgb, var(--color-if) 18%, transparent);
+}
+
+.block-then {
+  background: var(--color-then-bg);
+  border: 1px solid color-mix(in srgb, var(--color-then) 20%, transparent);
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 999px;
+  background: var(--color-ink);
+  color: var(--color-bg);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  padding: 0.7rem 1.25rem;
+  transition: background 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
+}
+
+.btn-primary:hover {
+  opacity: 0.9;
+}
+
+.btn-primary:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--color-ink-soft);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  padding: 0.7rem 1rem;
+  transition: color 0.15s ease;
+}
+
+.btn-ghost:hover {
+  color: var(--color-ink);
+}
+
+.btn-outline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--color-line-strong);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  padding: 0.7rem 1.25rem;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.btn-outline:hover {
+  border-color: var(--color-ink);
+  background: var(--color-bg);
+}
+
+.wallet-connect-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-line-strong);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  padding: 0.65rem 1.1rem;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--color-ink) 6%, transparent);
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.wallet-connect-btn:hover {
+  border-color: color-mix(in srgb, #e2761b 55%, var(--color-line-strong));
+  box-shadow: 0 4px 14px color-mix(in srgb, #e2761b 18%, transparent);
+}
+
+.wallet-connect-btn:disabled {
+  opacity: 0.5;
+}
+
+.wallet-account-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  padding: 0.3rem 0.55rem 0.3rem 0.3rem;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.wallet-account-btn:hover {
+  border-color: var(--color-line-strong);
+  background: var(--color-bg);
+}
+
+.wallet-fox {
+  display: inline-flex;
+  height: 1.75rem;
+  width: 1.75rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, #e2761b 16%, var(--color-bg));
+}
+
+.alert-error {
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-danger-line);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  padding: 0.65rem 1rem;
+  font-size: 0.8125rem;
+}
