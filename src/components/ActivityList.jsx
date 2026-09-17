@@ -31,8 +31,18 @@ export function ActivityList({ items, emptyText = 'No activity yet.', limit }) {
                     : 'text-mango'
               }`}
             >
-              {item.type === 'deposit' ? '+' : '−'}
-              {item.amountFormatted} USDC
+              {item.type === 'dca' ? (
+                <>
+                  {item.amountFormatted} {item.amountAsset || 'USDC'}
+                  <span className="text-muted"> → </span>
+                  {item.amountOutFormatted} {item.amountOutAsset || 'ETH'}
+                </>
+              ) : (
+                <>
+                  {item.type === 'deposit' ? '+' : '−'}
+                  {item.amountFormatted} {item.amountAsset || 'USDC'}
+                </>
+              )}
             </p>
             <a
               href={explorerTxUrl(item.txHash)}
@@ -55,12 +65,14 @@ function TypeBadge({ type }) {
     withdraw: 'bg-bg text-ink-soft',
     split: 'bg-mango-soft text-mango',
     recurring: 'bg-mango-soft text-mango',
+    dca: 'bg-teal-soft text-teal-deep',
   }
   const labels = {
     deposit: 'In',
     withdraw: 'Out',
     split: 'Split',
     recurring: 'Schedule',
+    dca: 'DCA',
   }
   return (
     <span

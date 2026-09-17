@@ -8,5 +8,6 @@ typechain-types
 deployments
 .env
 .env.local
+server/.keeper.lock
 *.log
 .DS_Store

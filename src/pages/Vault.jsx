@@ -1,58 +1,34 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ActivityList } from '../components/ActivityList'
-import { AppHeader } from '../components/AppHeader'
+import { DashShell } from '../components/DashShell'
 import { WalletButton } from '../components/WalletButton'
 import { useWallet } from '../context/WalletContext'
 import { getCachedVault, setCachedVault } from '../lib/automations'
 import { fetchVaultHistory } from '../lib/history'
 import {
   SEPOLIA_USDC,
+  depositEth,
   depositUsdc,
   ensureVault,
-  getTokenBalance,
   getVaultAddress,
   getVaultBalances,
   getVaultConfig,
+  withdrawAllEth,
   withdrawAllUsdc,
+  withdrawEth,
   withdrawUsdc,
 } from '../lib/vault'
 
-const SECTIONS = [
-  {
-    id: 'main',
-    label: 'Main',
-    blurb: 'Primary balance in your vault. Deposit and withdraw here.',
-  },
-  {
-    id: 'savings',
-    label: 'Savings',
-    blurb: 'Funds your automation sends to the savings wallet.',
-  },
-  {
-    id: 'trenches',
-    label: 'Trenches',
-    blurb: 'Reserved for memecoin / trench strategies.',
-    soon: true,
-  },
-  {
-    id: 'perps',
-    label: 'Perps',
-    blurb: 'Reserved for perps and leveraged strategies.',
-    soon: true,
-  },
-]
-
 export function VaultPage() {
   const { address, hasExtension, connecting, error, connect, chainName } = useWallet()
-  const [section, setSection] = useState('main')
   const [vault, setVault] = useState(null)
   const [balances, setBalances] = useState(null)
-  const [savingsBal, setSavingsBal] = useState(null)
   const [config, setConfig] = useState(null)
   const [history, setHistory] = useState([])
   const [depositAmount, setDepositAmount] = useState('')
   const [withdrawAmount, setWithdrawAmount] = useState('')
+  const [asset, setAsset] = useState('USDC')
   const [modal, setModal] = useState(null)
   const [busy, setBusy] = useState(null)
   const [status, setStatus] = useState(null)
@@ -72,7 +48,6 @@ export function VaultPage() {
         setBalances(null)
         setConfig(null)
         setHistory([])
-        setSavingsBal(null)
         return
       }
 
@@ -84,19 +59,8 @@ export function VaultPage() {
         getVaultConfig(vaultAddr),
       ])
 
-      // Set balances immediately so UI doesn't stay on "—" if history fails
       setBalances(b)
       setConfig(c)
-
-      let savings = null
-      if (c.savings) {
-        try {
-          savings = await getTokenBalance(c.savings, SEPOLIA_USDC)
-        } catch {
-          savings = { formatted: '0', raw: 0n, decimals: 6, symbol: 'USDC' }
-        }
-      }
-      setSavingsBal(savings)
 
       try {
         const hist = await fetchVaultHistory(vaultAddr, {
@@ -115,7 +79,6 @@ export function VaultPage() {
   useEffect(() => {
     setVault(null)
     setBalances(null)
-    setSavingsBal(null)
     setConfig(null)
     setHistory([])
     setErr(null)
@@ -126,60 +89,17 @@ export function VaultPage() {
     })
   }, [address, refresh])
 
-  const sectionHistory = useMemo(() => {
-    if (section === 'main') {
-      return history.filter((i) => i.type === 'deposit' || i.type === 'withdraw')
-    }
-    if (section === 'savings') {
-      return history.filter((i) => i.type === 'split')
-    }
-    return []
-  }, [history, section])
-
-  const overview = useMemo(
-    () => [
-      {
-        id: 'main',
-        label: 'Main',
-        value: balances
-          ? trimAmt(balances.vaultUsdcFormatted)
-          : loadingBalances
-            ? '…'
-            : '—',
-      },
-      {
-        id: 'savings',
-        label: 'Savings',
-        value: savingsBal
-          ? trimAmt(savingsBal.formatted)
-          : config?.savings
-            ? '0'
-            : loadingBalances
-              ? '…'
-              : '—',
-      },
-      { id: 'trenches', label: 'Trenches', value: '0' },
-      { id: 'perps', label: 'Perps', value: '0' },
-    ],
-    [balances, savingsBal, config, loadingBalances],
-  )
-
   if (!address) {
     return (
-      <div className="flex min-h-screen flex-col bg-bg">
-        <AppHeader />
+      <DashShell>
         <div className="flex flex-1 items-center justify-center px-6 py-16">
           <div className="w-full max-w-md text-center">
-            <h1 className="text-2xl font-semibold tracking-tight text-ink">
-              Connect to manage your vault
-            </h1>
+            <h1 className="dash-title">Connect to manage your vault</h1>
             <p className="mt-3 text-[15px] text-muted">
-              One vault, organized into Main, Savings, Trenches, and Perps.
+              One vault for deposits, withdrawals, and automation activity.
             </p>
             {!hasExtension && (
-              <p className="alert-error mt-5">
-                MetaMask was not detected.
-              </p>
+              <p className="alert-error mt-5">MetaMask was not detected.</p>
             )}
             {error && <p className="mt-4 text-[13px] text-danger">{error}</p>}
             <div className="mt-8 flex justify-center">
@@ -187,7 +107,7 @@ export function VaultPage() {
             </div>
           </div>
         </div>
-      </div>
+      </DashShell>
     )
   }
 
@@ -214,6 +134,7 @@ export function VaultPage() {
     setModal(null)
     setDepositAmount('')
     setWithdrawAmount('')
+    setAsset('USDC')
   }
 
   const onDeposit = async (e) => {
@@ -221,10 +142,13 @@ export function VaultPage() {
     if (!vault || !depositAmount) return
     setBusy('deposit')
     setErr(null)
-    setStatus('Confirm MetaMask: deposit USDC…')
+    setStatus(`Confirm MetaMask: deposit ${asset}…`)
     try {
-      const hash = await depositUsdc(vault, depositAmount)
-      setStatus(`Deposited to Main. Tx ${hash.slice(0, 10)}…`)
+      const hash =
+        asset === 'ETH'
+          ? await depositEth(vault, depositAmount)
+          : await depositUsdc(vault, depositAmount)
+      setStatus(`Deposited ${asset}. Tx ${hash.slice(0, 10)}…`)
       setDepositAmount('')
       setModal(null)
       await refresh()
@@ -241,10 +165,13 @@ export function VaultPage() {
     if (!vault || !withdrawAmount) return
     setBusy('withdraw')
     setErr(null)
-    setStatus('Confirm MetaMask: withdraw USDC…')
+    setStatus(`Confirm MetaMask: withdraw ${asset}…`)
     try {
-      const hash = await withdrawUsdc(vault, withdrawAmount, address)
-      setStatus(`Withdrawn from Main. Tx ${hash.slice(0, 10)}…`)
+      const hash =
+        asset === 'ETH'
+          ? await withdrawEth(vault, withdrawAmount)
+          : await withdrawUsdc(vault, withdrawAmount)
+      setStatus(`Withdrew ${asset}. Tx ${hash.slice(0, 10)}…`)
       setWithdrawAmount('')
       setModal(null)
       await refresh()
@@ -260,10 +187,11 @@ export function VaultPage() {
     if (!vault) return
     setBusy('withdraw-all')
     setErr(null)
-    setStatus('Confirm MetaMask: withdraw all USDC…')
+    setStatus(`Confirm MetaMask: withdraw all ${asset}…`)
     try {
-      await withdrawAllUsdc(vault, address)
-      setStatus('Withdrew all USDC from Main.')
+      const hash =
+        asset === 'ETH' ? await withdrawAllEth(vault) : await withdrawAllUsdc(vault)
+      setStatus(`Withdrew all ${asset}. Tx ${hash.slice(0, 10)}…`)
       setWithdrawAmount('')
       setModal(null)
       await refresh()
@@ -282,33 +210,49 @@ export function VaultPage() {
     setTimeout(() => setCopied(false), 1500)
   }
 
-  const active = SECTIONS.find((s) => s.id === section) || SECTIONS[0]
+  const usdc = balances
+    ? trimAmt(balances.vaultUsdcFormatted)
+    : loadingBalances
+      ? '…'
+      : '—'
+  const eth = balances
+    ? trimAmt(balances.vaultEthFormatted, 5)
+    : loadingBalances
+      ? '…'
+      : '—'
+  const walletUsdc = balances
+    ? `${trimAmt(balances.walletUsdcFormatted)} USDC`
+    : loadingBalances
+      ? '…'
+      : '—'
 
   return (
-    <div className="min-h-screen bg-bg">
-      <AppHeader />
-      <main className="mx-auto max-w-5xl px-6 py-10 sm:py-12">
-        <div className="flex flex-wrap items-end justify-between gap-4">
+    <>
+      <DashShell>
+        <div className="dash-header">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
-              Vault
-            </h1>
-            <p className="mt-1.5 text-[14px] text-muted">
-              One vault, four sections
-              {chainName ? ` · ${chainName}` : ''}.
+            <h1 className="dash-title">Vault</h1>
+            <p className="dash-subtitle">
+              Deposit, withdraw, and track activity in one place
+              {chainName ? ` · ${chainName}` : ''}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => refresh().catch((e) => setErr(e.message))}
-            className="btn-outline text-[13px]"
-          >
-            Refresh
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => refresh().catch((e) => setErr(e.message))}
+              className="btn-outline text-[13px]"
+            >
+              Refresh
+            </button>
+            <Link to="/app/new" className="btn-primary">
+              New automation
+            </Link>
+          </div>
         </div>
 
         {!vault ? (
-          <section className="mt-10 rounded-2xl border border-dashed border-line-strong px-6 py-14 text-center">
+          <section className="mt-6 rounded-2xl border border-dashed border-line-strong px-6 py-14 text-center">
             <p className="text-[15px] font-medium text-ink">No vault yet</p>
             <p className="mt-1 text-[13px] text-muted">
               Deploy a vault you own, or create an automation first.
@@ -329,7 +273,7 @@ export function VaultPage() {
           </section>
         ) : (
           <>
-            <section className="mt-8 rounded-2xl border border-line bg-surface p-5">
+            <section className="rounded-2xl border border-line bg-surface p-5">
               <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-muted">
                 Vault address
               </p>
@@ -343,98 +287,59 @@ export function VaultPage() {
                   {copied ? 'Copied' : 'Copy'}
                 </button>
               </div>
+              {config?.savings ? (
+                <p className="mt-3 text-[12px] text-muted">
+                  Split destination{' '}
+                  <span className="font-mono text-ink-soft">{config.savings}</span>
+                  {config.splitEnabled
+                    ? ` · ${(config.splitBps / 100).toFixed(0)}% on`
+                    : ' · off'}
+                </p>
+              ) : null}
             </section>
 
             <section className="mt-4 rounded-2xl border border-line bg-surface px-5 py-6">
               <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-muted">
-                Total in vault
+                Balance
               </p>
               <p className="mt-2 font-mono text-[36px] font-semibold tracking-tight text-ink sm:text-[42px]">
-                {balances
-                  ? trimAmt(balances.vaultUsdcFormatted)
-                  : loadingBalances
-                    ? '…'
-                    : '—'}
+                {usdc}
                 <span className="ml-2 text-[16px] font-normal text-muted">USDC</span>
               </p>
-              <p className="mt-1 text-[13px] text-muted">
-                {balances
-                  ? `${trimAmt(balances.vaultEthFormatted, 5)} ETH · across Main (Trenches & Perps coming soon)`
-                  : 'Funds held in your smart account'}
+              <p className="mt-1 font-mono text-[15px] text-muted">
+                {eth} ETH
+                <span className="mx-2 text-line-strong">·</span>
+                Wallet {walletUsdc}
               </p>
+
+              <div className="mt-5 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => setModal('deposit')}
+                  disabled={!!busy}
+                  className="btn-primary min-w-[120px]"
+                >
+                  Deposit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModal('withdraw')}
+                  disabled={!!busy}
+                  className="btn-outline min-w-[120px]"
+                >
+                  Withdraw
+                </button>
+              </div>
             </section>
 
-            <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-              {overview.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setSection(item.id)}
-                  className={`rounded-2xl border p-4 text-left transition ${
-                    section === item.id
-                      ? 'border-ink bg-surface'
-                      : 'border-line bg-surface hover:border-line-strong'
-                  }`}
-                >
-                  <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted">
-                    {item.label}
-                  </p>
-                  <p className="mt-2 font-mono text-[18px] font-medium text-ink">
-                    {item.value}
-                    <span className="ml-1 text-[12px] font-normal text-muted">USDC</span>
-                  </p>
-                </button>
-              ))}
-            </div>
-
-            <div className="mt-6 flex gap-1 overflow-x-auto border-b border-line pb-px">
-              {SECTIONS.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  onClick={() => setSection(s.id)}
-                  className={`whitespace-nowrap px-4 py-2.5 text-[13px] font-medium transition ${
-                    section === s.id
-                      ? 'border-b-2 border-ink text-ink'
-                      : 'text-muted hover:text-ink'
-                  }`}
-                >
-                  {s.label}
-                  {s.soon ? (
-                    <span className="ml-1.5 text-[10px] font-normal text-muted">Soon</span>
-                  ) : null}
-                </button>
-              ))}
-            </div>
-
-            <section className="mt-6">
-              <h2 className="text-[18px] font-semibold tracking-tight text-ink">
-                {active.label}
-              </h2>
-              <p className="mt-1 text-[13px] text-muted">{active.blurb}</p>
-
-              {section === 'main' && (
-                <MainSection
-                  balances={balances}
-                  loadingBalances={loadingBalances}
-                  busy={busy}
-                  onOpenDeposit={() => setModal('deposit')}
-                  onOpenWithdraw={() => setModal('withdraw')}
-                  history={sectionHistory}
-                />
-              )}
-
-              {section === 'savings' && (
-                <SavingsSection
-                  config={config}
-                  savingsBal={savingsBal}
-                  history={sectionHistory}
-                />
-              )}
-
-              {(section === 'trenches' || section === 'perps') && (
-                <SoonSection name={active.label} />
-              )}
+            <section className="mt-6 rounded-2xl border border-line bg-surface p-5">
+              <h2 className="text-[15px] font-semibold text-ink">Activity</h2>
+              <p className="mt-1 text-[12px] text-muted">
+                Deposits, withdrawals, splits, DCA, and scheduled sends
+              </p>
+              <div className="mt-4">
+                <ActivityList items={history} emptyText="No vault activity yet." />
+              </div>
             </section>
 
             {(status || err) && (
@@ -444,26 +349,42 @@ export function VaultPage() {
                     {status}
                   </p>
                 )}
-                {err && (
-                  <p className="alert-error">
-                    {err}
-                  </p>
-                )}
+                {err && <p className="alert-error">{err}</p>}
               </div>
             )}
           </>
         )}
-      </main>
+      </DashShell>
 
       {modal === 'deposit' && (
-        <Modal title="Deposit to Main" onClose={closeModal}>
+        <Modal title="Deposit" onClose={closeModal}>
           <form onSubmit={(e) => void onDeposit(e)}>
+            <div className="mb-3 flex gap-2">
+              {['USDC', 'ETH'].map((a) => (
+                <button
+                  key={a}
+                  type="button"
+                  onClick={() => setAsset(a)}
+                  className={`rounded-lg px-3 py-1.5 text-[12px] font-medium ${
+                    asset === a
+                      ? 'bg-ink text-bg'
+                      : 'border border-line text-muted hover:text-ink'
+                  }`}
+                >
+                  {a}
+                </button>
+              ))}
+            </div>
             <p className="text-[13px] text-muted">
-              Transfer USDC from your wallet into the vault Main balance.
+              Transfer {asset} from your wallet into the vault.
+              {asset === 'ETH' ? ' Needed for custom-token DCA.' : ''}
             </p>
             {balances && (
               <p className="mt-2 font-mono text-[12px] text-muted">
-                Wallet: {trimAmt(balances.walletUsdcFormatted)} USDC
+                Wallet:{' '}
+                {asset === 'ETH'
+                  ? `${trimAmt(balances.walletEthFormatted, 5)} ETH`
+                  : `${trimAmt(balances.walletUsdcFormatted)} USDC`}
               </p>
             )}
             <label className="mt-4 block text-[12px] font-medium text-muted">
@@ -502,14 +423,33 @@ export function VaultPage() {
       )}
 
       {modal === 'withdraw' && (
-        <Modal title="Withdraw from Main" onClose={closeModal}>
+        <Modal title="Withdraw" onClose={closeModal}>
           <form onSubmit={(e) => void onWithdraw(e)}>
+            <div className="mb-3 flex gap-2">
+              {['USDC', 'ETH'].map((a) => (
+                <button
+                  key={a}
+                  type="button"
+                  onClick={() => setAsset(a)}
+                  className={`rounded-lg px-3 py-1.5 text-[12px] font-medium ${
+                    asset === a
+                      ? 'bg-ink text-bg'
+                      : 'border border-line text-muted hover:text-ink'
+                  }`}
+                >
+                  {a}
+                </button>
+              ))}
+            </div>
             <p className="text-[13px] text-muted">
-              Send USDC from the vault back to your connected wallet.
+              Send {asset} from the vault back to your connected wallet.
             </p>
             {balances && (
               <p className="mt-2 font-mono text-[12px] text-muted">
-                Available: {trimAmt(balances.vaultUsdcFormatted)} USDC
+                Vault:{' '}
+                {asset === 'ETH'
+                  ? `${trimAmt(balances.vaultEthFormatted, 5)} ETH`
+                  : `${trimAmt(balances.vaultUsdcFormatted)} USDC`}
               </p>
             )}
             <label className="mt-4 block text-[12px] font-medium text-muted">
@@ -554,7 +494,7 @@ export function VaultPage() {
           </form>
         </Modal>
       )}
-    </div>
+    </>
   )
 }
 
@@ -593,152 +533,6 @@ function Modal({ title, onClose, children }) {
         </div>
         <div className="mt-4">{children}</div>
       </div>
-    </div>
-  )
-}
-
-function MainSection({
-  balances,
-  loadingBalances,
-  busy,
-  onOpenDeposit,
-  onOpenWithdraw,
-  history,
-}) {
-  const usdc = balances
-    ? trimAmt(balances.vaultUsdcFormatted)
-    : loadingBalances
-      ? '…'
-      : '—'
-  const eth = balances
-    ? trimAmt(balances.vaultEthFormatted, 5)
-    : loadingBalances
-      ? '…'
-      : '—'
-  const wallet = balances
-    ? `${trimAmt(balances.walletUsdcFormatted)} USDC`
-    : loadingBalances
-      ? '…'
-      : '—'
-
-  return (
-    <>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-2xl border border-line bg-surface p-4">
-          <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted">
-            Main balance
-          </p>
-          <p className="mt-2 font-mono text-[22px] font-medium text-ink">
-            {usdc} <span className="text-[13px] text-muted">USDC</span>
-          </p>
-          <p className="mt-1 text-[12px] text-muted">Wallet: {wallet}</p>
-        </div>
-        <div className="rounded-2xl border border-line bg-surface p-4">
-          <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted">
-            Vault ETH
-          </p>
-          <p className="mt-2 font-mono text-[22px] font-medium text-ink">
-            {eth} <span className="text-[13px] text-muted">ETH</span>
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-3">
-        <button
-          type="button"
-          onClick={onOpenDeposit}
-          disabled={!!busy}
-          className="btn-primary min-w-[120px]"
-        >
-          Deposit
-        </button>
-        <button
-          type="button"
-          onClick={onOpenWithdraw}
-          disabled={!!busy}
-          className="btn-outline min-w-[120px]"
-        >
-          Withdraw
-        </button>
-      </div>
-
-      <div className="mt-8 rounded-2xl border border-line bg-surface p-5">
-        <h3 className="text-[15px] font-semibold text-ink">Main activity</h3>
-        <p className="mt-1 text-[12px] text-muted">Deposits and withdrawals</p>
-        <div className="mt-4">
-          <ActivityList items={history} emptyText="No Main activity yet." />
-        </div>
-      </div>
-    </>
-  )
-}
-
-function SavingsSection({ config, savingsBal, history }) {
-  if (!config?.savings) {
-    return (
-      <div className="mt-6 rounded-2xl border border-dashed border-line-strong px-6 py-12 text-center">
-        <p className="text-[15px] font-medium text-ink">No savings wallet linked</p>
-        <p className="mt-1 text-[13px] text-muted">
-          Create an automation that sends a % of incoming USDC to a savings address.
-        </p>
-        <Link to="/app/new" className="btn-primary mt-5 inline-flex">
-          New automation
-        </Link>
-      </div>
-    )
-  }
-
-  return (
-    <>
-      <div className="mt-4 rounded-2xl border border-line bg-surface p-5">
-        <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted">
-          Savings balance
-        </p>
-        <p className="mt-2 font-mono text-[22px] font-medium text-ink">
-          {savingsBal ? trimAmt(savingsBal.formatted) : '—'}{' '}
-          <span className="text-[13px] text-muted">USDC</span>
-        </p>
-        <p className="mt-3 font-mono text-[12px] text-muted">{config.savings}</p>
-        <p className="mt-2 text-[12px] text-muted">
-          Automation split{' '}
-          {config.splitEnabled
-            ? `${(config.splitBps / 100).toFixed(0)}% On`
-            : 'Off'}
-          {' · '}
-          Balance is on this external wallet (not inside the vault contract).
-        </p>
-        <Link
-          to="/app"
-          className="mt-4 inline-block text-[13px] font-medium text-teal hover:underline"
-        >
-          Manage automations →
-        </Link>
-      </div>
-
-      <div className="mt-8 rounded-2xl border border-line bg-surface p-5">
-        <h3 className="text-[15px] font-semibold text-ink">Savings activity</h3>
-        <p className="mt-1 text-[12px] text-muted">
-          Automation splits sent from your vault
-        </p>
-        <div className="mt-4">
-          <ActivityList items={history} emptyText="No savings splits yet." />
-        </div>
-      </div>
-    </>
-  )
-}
-
-function SoonSection({ name }) {
-  return (
-    <div className="mt-6 rounded-2xl border border-dashed border-line-strong px-6 py-14 text-center">
-      <p className="text-[15px] font-medium text-ink">{name} is coming soon</p>
-      <p className="mx-auto mt-2 max-w-sm text-[13px] text-muted">
-        Same vault under the hood — this section will get its own balance and
-        strategies later. For now funds live in Main.
-      </p>
-      <p className="mt-6 font-mono text-[20px] font-medium text-ink">
-        0 <span className="text-[13px] font-normal text-muted">USDC</span>
-      </p>
     </div>
   )
 }

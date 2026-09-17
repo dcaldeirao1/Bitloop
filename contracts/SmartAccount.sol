@@ -7,6 +7,21 @@ interface IERC20 {
     function approve(address spender, uint256 amount) external returns (bool);
 }
 
+interface IDcaSwapRouter {
+    function swapExactTokensForETH(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address tokenIn,
+        address to
+    ) external returns (uint256 amountOut);
+
+    function swapExactETHForTokens(
+        uint256 amountOutMin,
+        address tokenOut,
+        address to
+    ) external payable returns (uint256 amountOut);
+}
+
 /// @notice Non-custodial vault: owner configures rules; keepers run permissionless executors.
 contract SmartAccount {
     address public owner;
@@ -23,6 +38,16 @@ contract SmartAccount {
     uint256 public recurringLastExecuted;
     bool public recurringEnabled;
 
+    /// @dev DCA: swap fixed token amount → ETH (tokenOut=0) or ERC-20 on an interval.
+    address public dcaToken;
+    address public dcaTokenOut;
+    address public dcaRouter;
+    uint256 public dcaAmount;
+    uint256 public dcaInterval;
+    uint256 public dcaLastExecuted;
+    uint256 public dcaMinOut;
+    bool public dcaEnabled;
+
     /// @dev Tracked balance so repeated processToken calls only split newly received tokens.
     mapping(address => uint256) public accounted;
 
@@ -37,6 +62,8 @@ contract SmartAccount {
     error InsufficientBalance();
     error InvalidInterval();
     error InvalidAmount();
+    error DcaDisabled();
+    error DcaNotDue();
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event SplitConfigured(address indexed token, address indexed savings, uint16 bps, bool enabled);
@@ -52,6 +79,22 @@ contract SmartAccount {
         address indexed token,
         address indexed to,
         uint256 amount,
+        address indexed caller
+    );
+    event DcaConfigured(
+        address indexed tokenIn,
+        address indexed tokenOut,
+        address router,
+        uint256 amount,
+        uint256 interval,
+        uint256 minOut,
+        bool enabled
+    );
+    event DcaExecuted(
+        address indexed tokenIn,
+        address indexed tokenOut,
+        uint256 amountIn,
+        uint256 amountOut,
         address indexed caller
     );
     event Executed(address indexed to, uint256 value, bytes data);
@@ -158,6 +201,77 @@ contract SmartAccount {
         recurringLastExecuted = block.timestamp;
         accounted[recurringToken] = IERC20(recurringToken).balanceOf(address(this));
         emit RecurringExecuted(recurringToken, recurringTo, sent, msg.sender);
+    }
+
+    /// @notice Configure DCA.
+    /// - ETH out: tokenIn=USDC, tokenOut=address(0), amount in USDC units
+    /// - Token out: tokenIn=address(0) (native ETH), tokenOut=ERC-20, amount in wei
+    function setDca(
+        address tokenIn_,
+        address tokenOut_,
+        address router_,
+        uint256 amount_,
+        uint256 interval_,
+        uint256 minOut_,
+        bool enabled_
+    ) external onlyOwner {
+        if (enabled_) {
+            if (router_ == address(0)) revert ZeroAddress();
+            if (amount_ == 0) revert InvalidAmount();
+            if (interval_ < 60) revert InvalidInterval();
+            if (tokenOut_ == address(0)) {
+                // USDC → ETH
+                if (tokenIn_ == address(0)) revert ZeroAddress();
+            } else {
+                // ETH → token (tokenIn must be zero / native)
+                if (tokenIn_ != address(0)) revert InvalidAmount();
+            }
+        }
+        dcaToken = tokenIn_;
+        dcaTokenOut = tokenOut_;
+        dcaRouter = router_;
+        dcaAmount = amount_;
+        dcaInterval = interval_;
+        dcaMinOut = minOut_;
+        dcaEnabled = enabled_;
+        emit DcaConfigured(tokenIn_, tokenOut_, router_, amount_, interval_, minOut_, enabled_);
+    }
+
+    /// @notice Permissionless: USDC→ETH or ETH→token when due.
+    function executeDca() external returns (uint256 amountOut) {
+        if (!dcaEnabled) revert DcaDisabled();
+        if (dcaRouter == address(0)) revert ZeroAddress();
+        if (dcaAmount == 0) revert InvalidAmount();
+
+        if (dcaLastExecuted != 0 && block.timestamp < dcaLastExecuted + dcaInterval) {
+            revert DcaNotDue();
+        }
+
+        if (dcaTokenOut == address(0)) {
+            // Sell USDC for ETH
+            if (dcaToken == address(0)) revert ZeroAddress();
+            uint256 bal = IERC20(dcaToken).balanceOf(address(this));
+            if (bal < dcaAmount) revert InsufficientBalance();
+            if (!IERC20(dcaToken).approve(dcaRouter, dcaAmount)) revert TransferFailed();
+            amountOut = IDcaSwapRouter(dcaRouter).swapExactTokensForETH(
+                dcaAmount,
+                dcaMinOut,
+                dcaToken,
+                address(this)
+            );
+            accounted[dcaToken] = IERC20(dcaToken).balanceOf(address(this));
+        } else {
+            // Buy token with vault ETH
+            if (address(this).balance < dcaAmount) revert InsufficientBalance();
+            amountOut = IDcaSwapRouter(dcaRouter).swapExactETHForTokens{value: dcaAmount}(
+                dcaMinOut,
+                dcaTokenOut,
+                address(this)
+            );
+        }
+
+        dcaLastExecuted = block.timestamp;
+        emit DcaExecuted(dcaToken, dcaTokenOut, dcaAmount, amountOut, msg.sender);
     }
 
     function execute(address to, uint256 value, bytes calldata data)

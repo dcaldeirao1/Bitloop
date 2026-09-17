@@ -7,6 +7,7 @@ import {
   MaxUint256,
   parseUnits,
 } from 'ethers'
+import { isVaultKindActive } from './automations'
 
 export const SEPOLIA_USDC =
   import.meta.env.VITE_USDC_ADDRESS ||
@@ -14,6 +15,9 @@ export const SEPOLIA_USDC =
 
 export const FACTORY_ADDRESS =
   import.meta.env.VITE_ACCOUNT_FACTORY_ADDRESS || ''
+
+export const DCA_ROUTER_ADDRESS =
+  import.meta.env.VITE_DCA_ROUTER_ADDRESS || ''
 
 const READ_RPC = (
   import.meta.env.VITE_ALCHEMY_SEPOLIA_ENDPOINT ||
@@ -47,12 +51,26 @@ export const ACCOUNT_ABI = [
   'function recurringEnabled() view returns (bool)',
   'function setRecurring(address token_, address to_, uint256 amount_, uint256 interval_, bool enabled_)',
   'function executeRecurring() returns (uint256)',
+  'function dcaToken() view returns (address)',
+  'function dcaTokenOut() view returns (address)',
+  'function dcaRouter() view returns (address)',
+  'function dcaAmount() view returns (uint256)',
+  'function dcaInterval() view returns (uint256)',
+  'function dcaLastExecuted() view returns (uint256)',
+  'function dcaMinOut() view returns (uint256)',
+  'function dcaEnabled() view returns (bool)',
+  'function setDca(address tokenIn_, address tokenOut_, address router_, uint256 amount_, uint256 interval_, uint256 minOut_, bool enabled_)',
+  'function executeDca() returns (uint256)',
   'function withdrawToken(address token, address to, uint256 amount)',
   'function withdraw(address to, uint256 amount)',
   'event TokenSplit(address indexed token, uint256 incoming, uint256 sentToSavings, address indexed caller)',
   'event SplitConfigured(address indexed token, address indexed savings, uint16 bps, bool enabled)',
   'event RecurringConfigured(address indexed token, address indexed to, uint256 amount, uint256 interval, bool enabled)',
   'event RecurringExecuted(address indexed token, address indexed to, uint256 amount, address indexed caller)',
+  'event DcaConfigured(address indexed tokenIn, address indexed tokenOut, address router, uint256 amount, uint256 interval, uint256 minOut, bool enabled)',
+  'event DcaExecuted(address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut, address indexed caller)',
+  'event EthReceived(address indexed from, uint256 amount, uint256 sentToSavings)',
+  'event OwnershipTransferred(address indexed previousOwner, address indexed newOwner)',
 ]
 
 export const ERC20_ABI = [
@@ -131,6 +149,34 @@ export async function setupUsdcSplitAutomation({ savingsAddress, percent }) {
   return {
     vaultAddress: vault,
     token: getAddress(SEPOLIA_USDC),
+    savingsAddress: getAddress(savingsAddress),
+    percent: Number(percent),
+    bps,
+  }
+}
+
+/**
+ * Native ETH income split — setSplit(token=0) so receive() auto-forwards % on deposit.
+ * Note: one split slot per vault (replaces any USDC split).
+ */
+export async function setupEthSplitAutomation({ savingsAddress, percent }) {
+  const signer = await getSigner()
+  const vault = await ensureVault()
+
+  const account = new Contract(vault, ACCOUNT_ABI, signer)
+  const bps = Math.round(Number(percent) * 100)
+  const ZERO = '0x0000000000000000000000000000000000000000'
+  const tx = await account.setSplit(
+    ZERO,
+    getAddress(savingsAddress),
+    bps,
+    true,
+  )
+  await tx.wait()
+
+  return {
+    vaultAddress: vault,
+    token: null,
     savingsAddress: getAddress(savingsAddress),
     percent: Number(percent),
     bps,
@@ -264,6 +310,240 @@ export async function getRecurringConfig(vaultAddress) {
   }
 }
 
+function requireDcaRouter() {
+  if (!DCA_ROUTER_ADDRESS) {
+    throw new Error('Missing VITE_DCA_ROUTER_ADDRESS — deploy the DCA router first.')
+  }
+  return getAddress(DCA_ROUTER_ADDRESS)
+}
+
+/** Returns true if Uniswap V2 can quote WETH → tokenOut on Sepolia. */
+export async function canBuyTokenWithEth(tokenOut) {
+  const out = getAddress(tokenOut)
+  if (out === ZERO) return true
+  const provider = getReadProvider()
+  const uni = (
+    import.meta.env.VITE_UNISWAP_V2_ROUTER ||
+    '0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3'
+  ).trim()
+  const router = new Contract(
+    uni,
+    [
+      'function WETH() view returns (address)',
+      'function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)',
+    ],
+    provider,
+  )
+  try {
+    const weth = await router.WETH()
+    const amounts = await router.getAmountsOut(parseUnits('0.001', 18), [weth, out])
+    return amounts.length === 2 && amounts[1] > 0n
+  } catch {
+    return false
+  }
+}
+
+/**
+ * DCA setup:
+ * - ETH out: sell USDC for ETH (amount in USDC)
+ * - Token out: buy token with vault ETH (amount in ETH)
+ */
+export async function setupUsdcDcaAutomation({
+  amountHuman,
+  intervalValue,
+  intervalUnit,
+  tokenOut = null,
+  minOutHuman = '0',
+}) {
+  const signer = await getSigner()
+  const vault = await ensureVault()
+  const account = new Contract(vault, ACCOUNT_ABI, signer)
+  const interval = intervalToSeconds(intervalValue, intervalUnit)
+  const router = requireDcaRouter()
+  const toEth = !tokenOut || tokenOut === ZERO
+
+  let tokenIn
+  let out
+  let amount
+  let minOut
+  let decimals
+
+  if (toEth) {
+    const erc20 = new Contract(getAddress(SEPOLIA_USDC), ERC20_ABI, signer)
+    decimals = Number(await erc20.decimals().catch(() => 6))
+    amount = parseUnits(String(amountHuman), decimals)
+    minOut = parseUnits(String(minOutHuman || '0'), 18)
+    tokenIn = getAddress(SEPOLIA_USDC)
+    out = ZERO
+  } else {
+    out = getAddress(tokenOut)
+    const ok = await canBuyTokenWithEth(out)
+    if (!ok) {
+      throw new Error(
+        'No Sepolia Uniswap WETH pool for this token. Pick a token with liquidity, or DCA to ETH first.',
+      )
+    }
+    decimals = 18
+    amount = parseUnits(String(amountHuman), 18)
+    minOut = 0n
+    tokenIn = ZERO
+  }
+
+  const tx = await account.setDca(
+    tokenIn,
+    out,
+    router,
+    amount,
+    interval,
+    minOut,
+    true,
+  )
+  await tx.wait()
+
+  return {
+    vaultAddress: vault,
+    token: toEth ? getAddress(SEPOLIA_USDC) : null,
+    tokenOut: toEth ? null : out,
+    router,
+    amount: amount.toString(),
+    amountHuman: String(amountHuman),
+    amountAsset: toEth ? 'USDC' : 'ETH',
+    decimals,
+    interval,
+    intervalValue: Number(intervalValue),
+    intervalUnit,
+    minOut: minOut.toString(),
+  }
+}
+
+/** Sell vault ETH for USDC via Uniswap (ETH → USDC). */
+export async function setupSellEthForUsdcAutomation({
+  amountHuman,
+  intervalValue,
+  intervalUnit,
+}) {
+  return setupUsdcDcaAutomation({
+    amountHuman,
+    intervalValue,
+    intervalUnit,
+    tokenOut: SEPOLIA_USDC,
+  })
+}
+
+/** Sell an ERC-20 from the vault for ETH via the DCA router inventory rate. */
+export async function setupSellTokenForEthAutomation({
+  tokenIn,
+  amountHuman,
+  intervalValue,
+  intervalUnit,
+  minOutHuman = '0',
+}) {
+  const signer = await getSigner()
+  const vault = await ensureVault()
+  const account = new Contract(vault, ACCOUNT_ABI, signer)
+  const interval = intervalToSeconds(intervalValue, intervalUnit)
+  const router = requireDcaRouter()
+  const token = getAddress(tokenIn)
+  const erc20 = new Contract(token, ERC20_ABI, signer)
+  const decimals = Number(await erc20.decimals().catch(() => 18))
+  const symbol = await erc20.symbol().catch(() => 'TOKEN')
+  const amount = parseUnits(String(amountHuman), decimals)
+  const minOut = parseUnits(String(minOutHuman || '0'), 18)
+
+  const tx = await account.setDca(
+    token,
+    ZERO,
+    router,
+    amount,
+    interval,
+    minOut,
+    true,
+  )
+  await tx.wait()
+
+  return {
+    vaultAddress: vault,
+    token,
+    tokenOut: null,
+    tokenSymbol: symbol,
+    router,
+    amount: amount.toString(),
+    amountHuman: String(amountHuman),
+    amountAsset: symbol,
+    decimals,
+    interval,
+    intervalValue: Number(intervalValue),
+    intervalUnit,
+    minOut: minOut.toString(),
+  }
+}
+
+/** Recurring payout of any ERC-20 (defaults to USDC). */
+export async function setupTokenRecurringAutomation({
+  tokenAddress = SEPOLIA_USDC,
+  toAddress,
+  amountHuman,
+  intervalValue,
+  intervalUnit,
+}) {
+  const signer = await getSigner()
+  const vault = await ensureVault()
+  const account = new Contract(vault, ACCOUNT_ABI, signer)
+  const token = getAddress(tokenAddress)
+  const erc20 = new Contract(token, ERC20_ABI, signer)
+  const decimals = Number(await erc20.decimals().catch(() => 18))
+  const symbol = await erc20.symbol().catch(() => 'TOKEN')
+  const amount = parseUnits(String(amountHuman), decimals)
+  const interval = intervalToSeconds(intervalValue, intervalUnit)
+
+  const tx = await account.setRecurring(
+    token,
+    getAddress(toAddress),
+    amount,
+    interval,
+    true,
+  )
+  await tx.wait()
+
+  return {
+    vaultAddress: vault,
+    token,
+    tokenSymbol: symbol,
+    toAddress: getAddress(toAddress),
+    amount: amount.toString(),
+    amountHuman: String(amountHuman),
+    decimals,
+    interval,
+    intervalValue: Number(intervalValue),
+    intervalUnit,
+  }
+}
+
+export async function setDcaEnabled(
+  vaultAddress,
+  enabled,
+  { token, tokenOut, router, amountHuman, interval, decimals = 6, minOut = '0', amountAsset },
+) {
+  const signer = await getSigner()
+  const account = new Contract(vaultAddress, ACCOUNT_ABI, signer)
+  const toEth = !tokenOut || tokenOut === ZERO
+  const asset = amountAsset || (toEth ? 'USDC' : 'ETH')
+  const dec = asset === 'ETH' ? 18 : decimals
+  const amount = parseUnits(String(amountHuman), dec)
+  const out = toEth ? ZERO : getAddress(tokenOut)
+  const tokenIn = toEth ? getAddress(token || SEPOLIA_USDC) : ZERO
+  const tx = await account.setDca(
+    tokenIn,
+    out,
+    getAddress(router || requireDcaRouter()),
+    amount,
+    BigInt(interval),
+    BigInt(minOut || 0),
+    enabled,
+  )
+  await tx.wait()
+}
+
 export async function getTokenBalance(holderAddress, token = SEPOLIA_USDC) {
   if (!holderAddress) return { raw: 0n, formatted: '0', decimals: 6, symbol: 'USDC' }
   const provider = getReadProvider()
@@ -285,10 +565,13 @@ export async function getVaultBalances(vaultAddress, ownerAddress, token = SEPOL
   const erc20 = new Contract(getAddress(token), ERC20_ABI, provider)
   const vaultAddr = getAddress(vaultAddress)
 
-  const [vaultToken, walletToken, eth, decimals, symbol] = await Promise.all([
+  const [vaultToken, walletToken, eth, walletEth, decimals, symbol] = await Promise.all([
     erc20.balanceOf(vaultAddr),
     ownerAddress ? erc20.balanceOf(getAddress(ownerAddress)) : Promise.resolve(0n),
     provider.getBalance(vaultAddr),
+    ownerAddress
+      ? provider.getBalance(getAddress(ownerAddress))
+      : Promise.resolve(0n),
     erc20.decimals().catch(() => 6),
     erc20.symbol().catch(() => 'USDC'),
   ])
@@ -303,6 +586,8 @@ export async function getVaultBalances(vaultAddress, ownerAddress, token = SEPOL
     walletUsdcFormatted: formatUnits(walletToken, d),
     vaultEth: eth,
     vaultEthFormatted: formatUnits(eth, 18),
+    walletEth,
+    walletEthFormatted: formatUnits(walletEth, 18),
   }
 }
 
@@ -325,6 +610,35 @@ export async function getVaultConfig(vaultAddress) {
   }
 }
 
+/** On-chain timing for scheduled DCA / recurring automations. */
+export async function getVaultScheduleState(vaultAddress) {
+  const provider = getReadProvider()
+  const account = new Contract(vaultAddress, ACCOUNT_ABI, provider)
+  const [
+    dcaEnabled,
+    dcaLastExecuted,
+    dcaInterval,
+    recurringEnabled,
+    recurringLastExecuted,
+    recurringInterval,
+  ] = await Promise.all([
+    account.dcaEnabled().catch(() => false),
+    account.dcaLastExecuted().catch(() => 0n),
+    account.dcaInterval().catch(() => 0n),
+    account.recurringEnabled().catch(() => false),
+    account.recurringLastExecuted().catch(() => 0n),
+    account.recurringInterval().catch(() => 0n),
+  ])
+  return {
+    dcaEnabled: Boolean(dcaEnabled),
+    dcaLastExecuted: Number(dcaLastExecuted),
+    dcaInterval: Number(dcaInterval),
+    recurringEnabled: Boolean(recurringEnabled),
+    recurringLastExecuted: Number(recurringLastExecuted),
+    recurringInterval: Number(recurringInterval),
+  }
+}
+
 /** Transfer USDC from connected wallet → vault (simple ERC-20 transfer). */
 export async function depositUsdc(vaultAddress, amountHuman, token = SEPOLIA_USDC) {
   const signer = await getSigner()
@@ -334,8 +648,12 @@ export async function depositUsdc(vaultAddress, amountHuman, token = SEPOLIA_USD
   const tx = await erc20.transfer(getAddress(vaultAddress), amount)
   await tx.wait()
 
-  // ERC-20 transfers don't auto-run vault logic — poke the split now if configured.
+  // ERC-20 transfers don't auto-run vault logic — poke the split now if configured
+  // and not soft-paused in Supabase.
   try {
+    const softActive = await isVaultKindActive(vaultAddress, 'split')
+    if (!softActive) return tx.hash
+
     const vault = new Contract(getAddress(vaultAddress), ACCOUNT_ABI, signer)
     if (await vault.splitEnabled()) {
       const tokenAddr = getAddress(token)
@@ -349,6 +667,18 @@ export async function depositUsdc(vaultAddress, amountHuman, token = SEPOLIA_USD
     /* keeper will pick it up if this fails */
   }
 
+  return tx.hash
+}
+
+/** Send native ETH from connected wallet → vault. */
+export async function depositEth(vaultAddress, amountHuman) {
+  const signer = await getSigner()
+  const amount = parseUnits(String(amountHuman), 18)
+  const tx = await signer.sendTransaction({
+    to: getAddress(vaultAddress),
+    value: amount,
+  })
+  await tx.wait()
   return tx.hash
 }
 
@@ -368,6 +698,16 @@ export async function withdrawUsdc(vaultAddress, amountHuman, toAddress, token =
   return tx.hash
 }
 
+/** Owner withdraws ETH from vault to their wallet. */
+export async function withdrawEth(vaultAddress, amountHuman, toAddress) {
+  const signer = await getSigner()
+  const vault = new Contract(vaultAddress, ACCOUNT_ABI, signer)
+  const amount = parseUnits(String(amountHuman), 18)
+  const tx = await vault.withdraw(getAddress(toAddress), amount)
+  await tx.wait()
+  return tx.hash
+}
+
 export async function withdrawAllUsdc(vaultAddress, toAddress, token = SEPOLIA_USDC) {
   const provider = await getProvider()
   const erc20 = new Contract(getAddress(token), ERC20_ABI, provider)
@@ -380,6 +720,17 @@ export async function withdrawAllUsdc(vaultAddress, toAddress, token = SEPOLIA_U
     getAddress(toAddress),
     bal,
   )
+  await tx.wait()
+  return tx.hash
+}
+
+export async function withdrawAllEth(vaultAddress, toAddress) {
+  const provider = await getProvider()
+  const bal = await provider.getBalance(getAddress(vaultAddress))
+  if (bal === 0n) throw new Error('Vault ETH balance is zero')
+  const signer = await getSigner()
+  const vault = new Contract(vaultAddress, ACCOUNT_ABI, signer)
+  const tx = await vault.withdraw(getAddress(toAddress), bal)
   await tx.wait()
   return tx.hash
 }
