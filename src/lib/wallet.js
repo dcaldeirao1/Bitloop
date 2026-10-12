@@ -94,6 +94,41 @@ export function chainLabel(chainId) {
   return CHAIN_NAMES[chainId] ?? `Chain ${chainId}`
 }
 
+export const SEPOLIA_CHAIN_ID = 11155111
+
+export function isSepolia(chainId) {
+  return Number(chainId) === SEPOLIA_CHAIN_ID
+}
+
+/** Prompt MetaMask to switch to Sepolia (adds the network if missing). */
+export async function switchToSepolia() {
+  if (!window.ethereum) throw new Error('MetaMask is not installed')
+  const hex = `0x${SEPOLIA_CHAIN_ID.toString(16)}`
+  try {
+    await window.ethereum.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: hex }],
+    })
+  } catch (err) {
+    if (err?.code === 4902) {
+      await window.ethereum.request({
+        method: 'wallet_addEthereumChain',
+        params: [
+          {
+            chainId: hex,
+            chainName: 'Sepolia',
+            nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 },
+            rpcUrls: ['https://ethereum-sepolia-rpc.publicnode.com'],
+            blockExplorerUrls: ['https://sepolia.etherscan.io'],
+          },
+        ],
+      })
+      return
+    }
+    throw err
+  }
+}
+
 export function onAccountsChanged(handler) {
   const eth = window.ethereum
   if (!eth?.on) return () => {}

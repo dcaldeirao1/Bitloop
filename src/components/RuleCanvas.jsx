@@ -1,4 +1,10 @@
 import { isValidAddress } from '../lib/automations'
+import {
+  RELAY_CHAINS,
+  findChainToken,
+  isNativeCurrency,
+  tokensForChain,
+} from '../lib/relay'
 
 export function RuleCanvas({
   trigger,
@@ -110,40 +116,33 @@ function TriggerBlock({ trigger, onChange, onRemove }) {
   }
 
   if (trigger.type === 'time_window') {
+    const hh = String(trigger.hour ?? 9).padStart(2, '0')
+    const mm = String(trigger.minute ?? 0).padStart(2, '0')
+    const timeValue = `${hh}:${mm}`
     return (
       <TriggerShell onRemove={onRemove} wide>
-        <p className="mb-3 pr-6 text-[14px] font-medium text-ink">only between (UTC)</p>
+        <p className="mb-3 pr-6 text-[14px] font-medium text-ink">at (UTC)</p>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <input
-            type="number"
-            min={0}
-            max={23}
-            value={trigger.startHour}
-            onChange={(e) =>
+            type="time"
+            value={timeValue}
+            onChange={(e) => {
+              const [h, m] = String(e.target.value || '00:00').split(':')
               onChange({
                 ...trigger,
-                startHour: Math.min(23, Math.max(0, Number(e.target.value) || 0)),
+                hour: Math.min(23, Math.max(0, Number(h) || 0)),
+                minute: Math.min(59, Math.max(0, Number(m) || 0)),
               })
-            }
-            className="w-14 rounded-md border border-line bg-surface px-1.5 py-0.5 text-center font-mono text-[13px] text-teal outline-none focus:border-teal"
-          />
-          <span className="text-[12px] text-muted">to</span>
-          <input
-            type="number"
-            min={0}
-            max={23}
-            value={trigger.endHour}
-            onChange={(e) =>
-              onChange({
-                ...trigger,
-                endHour: Math.min(23, Math.max(0, Number(e.target.value) || 0)),
-              })
-            }
-            className="w-14 rounded-md border border-line bg-surface px-1.5 py-0.5 text-center font-mono text-[13px] text-teal outline-none focus:border-teal"
+            }}
+            className="rounded-md border border-line bg-surface px-2 py-1 font-mono text-[13px] text-teal outline-none focus:border-teal"
           />
           <span className="text-[12px] text-muted">· then every</span>
         </div>
         <IntervalFields trigger={trigger} onChange={onChange} />
+        <p className="mt-2 text-[11px] text-muted">
+          Soft gate opens near this UTC time; on-chain interval still controls how often it
+          fires.
+        </p>
       </TriggerShell>
     )
   }
@@ -366,6 +365,246 @@ function ActionBlock({ action, onChange, onRemove }) {
           ok={addressOk}
           onChange={(v) => onChange({ ...action, to: v })}
         />
+      </ActionShell>
+    )
+  }
+
+  if (action.type === 'bridge_relay') {
+    const recipientOk = isValidAddress(action.recipient)
+    const originTokens = tokensForChain(action.originChainId)
+    const destTokens = tokensForChain(action.destinationChainId)
+    const originTokenId = action.originToken || 'USDC'
+    const destTokenId = action.destinationToken || 'USDC'
+    const originPreset = findChainToken(action.originChainId, originTokenId)
+    const destPreset = findChainToken(action.destinationChainId, destTokenId)
+    const originSym =
+      originTokenId === 'custom'
+        ? 'token'
+        : originPreset?.symbol || action.originSymbol || 'token'
+    const originIsNative =
+      originTokenId === 'ETH' ||
+      originTokenId === 'MATIC' ||
+      isNativeCurrency(action.originCurrency || originPreset?.address)
+    const customOriginOk =
+      originTokenId !== 'custom' || isValidAddress(action.originCustomAddress)
+    const customDestOk =
+      destTokenId !== 'custom' || isValidAddress(action.destinationCustomAddress)
+
+    const patchOriginChain = (chainId) => {
+      const nextId = Number(chainId)
+      const keep = findChainToken(nextId, originTokenId)
+      const fallback = findChainToken(nextId, 'USDC') || tokensForChain(nextId)[0]
+      const token = keep || fallback
+      onChange({
+        ...action,
+        originChainId: nextId,
+        originToken: token?.id || 'custom',
+        originCurrency: token?.address || '',
+        originSymbol: token?.symbol || 'TOKEN',
+        originDecimals: token?.decimals ?? 18,
+        originCustomAddress: keep ? '' : action.originCustomAddress,
+      })
+    }
+
+    const patchDestChain = (chainId) => {
+      const nextId = Number(chainId)
+      const keep = findChainToken(nextId, destTokenId)
+      const fallback = findChainToken(nextId, 'USDC') || tokensForChain(nextId)[0]
+      const token = keep || fallback
+      onChange({
+        ...action,
+        destinationChainId: nextId,
+        destinationToken: token?.id || 'custom',
+        destinationCurrency: token?.address || '',
+        destinationSymbol: token?.symbol || 'TOKEN',
+        destinationDecimals: token?.decimals ?? 18,
+        destinationCustomAddress: keep ? '' : action.destinationCustomAddress,
+      })
+    }
+
+    const patchOriginToken = (tokenId) => {
+      if (tokenId === 'custom') {
+        onChange({
+          ...action,
+          originToken: 'custom',
+          originCurrency: action.originCustomAddress || '',
+          originSymbol: 'TOKEN',
+          originDecimals: Number(action.originDecimals) || 18,
+        })
+        return
+      }
+      const token = findChainToken(action.originChainId, tokenId)
+      onChange({
+        ...action,
+        originToken: tokenId,
+        originCurrency: token?.address || '',
+        originSymbol: token?.symbol || tokenId,
+        originDecimals: token?.decimals ?? 18,
+        originCustomAddress: '',
+      })
+    }
+
+    const patchDestToken = (tokenId) => {
+      if (tokenId === 'custom') {
+        onChange({
+          ...action,
+          destinationToken: 'custom',
+          destinationCurrency: action.destinationCustomAddress || '',
+          destinationSymbol: 'TOKEN',
+          destinationDecimals: Number(action.destinationDecimals) || 18,
+        })
+        return
+      }
+      const token = findChainToken(action.destinationChainId, tokenId)
+      onChange({
+        ...action,
+        destinationToken: tokenId,
+        destinationCurrency: token?.address || '',
+        destinationSymbol: token?.symbol || tokenId,
+        destinationDecimals: token?.decimals ?? 18,
+        destinationCustomAddress: '',
+      })
+    }
+
+    return (
+      <ActionShell onRemove={onRemove}>
+        <p className="mb-3 pr-6 text-[14px] font-medium text-ink">
+          bridge{' '}
+          <AmountInput
+            value={action.amount}
+            onChange={(v) => onChange({ ...action, amount: v })}
+          />{' '}
+          {originSym} via Relay
+        </p>
+        <div className="mb-3 grid gap-3 sm:grid-cols-2">
+          <label className="block text-[11px] font-medium text-muted">
+            From chain
+            <select
+              className="mt-1.5 w-full rounded-lg border border-line bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-ink"
+              value={action.originChainId}
+              onChange={(e) => patchOriginChain(e.target.value)}
+            >
+              {RELAY_CHAINS.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-[11px] font-medium text-muted">
+            From token
+            <select
+              className="mt-1.5 w-full rounded-lg border border-line bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-ink"
+              value={originTokenId}
+              onChange={(e) => patchOriginToken(e.target.value)}
+            >
+              {originTokens.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.symbol}
+                  {t.native ? ' (native)' : ''}
+                </option>
+              ))}
+              <option value="custom">Custom ERC-20…</option>
+            </select>
+          </label>
+          <label className="block text-[11px] font-medium text-muted">
+            To chain
+            <select
+              className="mt-1.5 w-full rounded-lg border border-line bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-ink"
+              value={action.destinationChainId}
+              onChange={(e) => patchDestChain(e.target.value)}
+            >
+              {RELAY_CHAINS.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-[11px] font-medium text-muted">
+            To token
+            <select
+              className="mt-1.5 w-full rounded-lg border border-line bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-ink"
+              value={destTokenId}
+              onChange={(e) => patchDestToken(e.target.value)}
+            >
+              {destTokens.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.symbol}
+                  {t.native ? ' (native)' : ''}
+                </option>
+              ))}
+              <option value="custom">Custom ERC-20…</option>
+            </select>
+          </label>
+        </div>
+        {originTokenId === 'custom' ? (
+          <div className="mb-3 grid gap-3 sm:grid-cols-[1fr_5.5rem]">
+            <AddressField
+              label="Origin token contract"
+              value={action.originCustomAddress}
+              ok={customOriginOk}
+              onChange={(v) =>
+                onChange({
+                  ...action,
+                  originCustomAddress: v,
+                  originCurrency: v,
+                  originToken: 'custom',
+                })
+              }
+            />
+            <label className="block text-[11px] font-medium text-muted">
+              Decimals
+              <input
+                type="number"
+                min={0}
+                max={36}
+                value={action.originDecimals ?? 18}
+                onChange={(e) =>
+                  onChange({
+                    ...action,
+                    originDecimals: Math.min(36, Math.max(0, Number(e.target.value) || 0)),
+                  })
+                }
+                className="mt-1.5 w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-[13px] text-ink outline-none focus:border-ink"
+              />
+            </label>
+          </div>
+        ) : null}
+        {destTokenId === 'custom' ? (
+          <div className="mb-3">
+            <AddressField
+              label="Destination token contract"
+              value={action.destinationCustomAddress}
+              ok={customDestOk}
+              onChange={(v) =>
+                onChange({
+                  ...action,
+                  destinationCustomAddress: v,
+                  destinationCurrency: v,
+                  destinationToken: 'custom',
+                })
+              }
+            />
+          </div>
+        ) : null}
+        <AddressField
+          label="Recipient on destination"
+          value={action.recipient}
+          ok={recipientOk}
+          onChange={(v) => onChange({ ...action, recipient: v })}
+        />
+        {originIsNative ? (
+          <p className="mt-2 text-[12px] leading-relaxed text-danger">
+            Vault automations can only send ERC-20s. Use WETH (or another token) as the origin,
+            or wrap ETH first. Destination can still be native ETH.
+          </p>
+        ) : (
+          <p className="mt-2 text-[12px] leading-relaxed text-muted">
+            Vault sends the origin token to a Relay deposit address; Relay delivers the destination
+            token to the recipient. Origin chain/token must match what the vault holds.
+          </p>
+        )}
       </ActionShell>
     )
   }

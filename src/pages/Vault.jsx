@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ActivityList } from '../components/ActivityList'
 import { DashShell } from '../components/DashShell'
+import { NetworkBanner } from '../components/NetworkBanner'
 import { WalletButton } from '../components/WalletButton'
 import { useWallet } from '../context/WalletContext'
 import { getCachedVault, setCachedVault } from '../lib/automations'
-import { fetchVaultHistory } from '../lib/history'
+import { explorerTxUrl, fetchVaultHistory } from '../lib/history'
 import {
   SEPOLIA_USDC,
   depositEth,
@@ -32,6 +33,7 @@ export function VaultPage() {
   const [modal, setModal] = useState(null)
   const [busy, setBusy] = useState(null)
   const [status, setStatus] = useState(null)
+  const [statusTx, setStatusTx] = useState(null)
   const [err, setErr] = useState(null)
   const [copied, setCopied] = useState(false)
   const [loadingBalances, setLoadingBalances] = useState(false)
@@ -114,6 +116,7 @@ export function VaultPage() {
   const onCreateVault = async () => {
     setBusy('create')
     setErr(null)
+    setStatusTx(null)
     setStatus('Confirm MetaMask: deploy vault…')
     try {
       const addr = await ensureVault()
@@ -122,7 +125,7 @@ export function VaultPage() {
       setStatus('Vault deployed.')
       await refresh()
     } catch (e) {
-      setErr(e?.shortMessage || e?.message || 'Deploy failed')
+      setErr(humanTxError(e, 'Deploy failed'))
       setStatus(null)
     } finally {
       setBusy(null)
@@ -142,19 +145,22 @@ export function VaultPage() {
     if (!vault || !depositAmount) return
     setBusy('deposit')
     setErr(null)
+    setStatusTx(null)
     setStatus(`Confirm MetaMask: deposit ${asset}…`)
     try {
       const hash =
         asset === 'ETH'
           ? await depositEth(vault, depositAmount)
           : await depositUsdc(vault, depositAmount)
-      setStatus(`Deposited ${asset}. Tx ${hash.slice(0, 10)}…`)
+      setStatus(`Deposited ${asset} (confirmed)`)
+      setStatusTx(hash)
       setDepositAmount('')
       setModal(null)
       await refresh()
     } catch (e2) {
-      setErr(e2?.shortMessage || e2?.message || 'Deposit failed')
+      setErr(humanTxError(e2, 'Deposit failed'))
       setStatus(null)
+      setStatusTx(null)
     } finally {
       setBusy(null)
     }
@@ -165,39 +171,47 @@ export function VaultPage() {
     if (!vault || !withdrawAmount) return
     setBusy('withdraw')
     setErr(null)
+    setStatusTx(null)
     setStatus(`Confirm MetaMask: withdraw ${asset}…`)
     try {
       const hash =
         asset === 'ETH'
-          ? await withdrawEth(vault, withdrawAmount)
-          : await withdrawUsdc(vault, withdrawAmount)
-      setStatus(`Withdrew ${asset}. Tx ${hash.slice(0, 10)}…`)
+          ? await withdrawEth(vault, withdrawAmount, address)
+          : await withdrawUsdc(vault, withdrawAmount, address)
+      setStatus(`Withdrew ${asset} (confirmed)`)
+      setStatusTx(hash)
       setWithdrawAmount('')
       setModal(null)
       await refresh()
     } catch (e2) {
-      setErr(e2?.shortMessage || e2?.message || 'Withdraw failed')
+      setErr(humanTxError(e2, 'Withdraw failed'))
       setStatus(null)
+      setStatusTx(null)
     } finally {
       setBusy(null)
     }
   }
 
   const onWithdrawAll = async () => {
-    if (!vault) return
+    if (!vault || !address) return
     setBusy('withdraw-all')
     setErr(null)
+    setStatusTx(null)
     setStatus(`Confirm MetaMask: withdraw all ${asset}…`)
     try {
       const hash =
-        asset === 'ETH' ? await withdrawAllEth(vault) : await withdrawAllUsdc(vault)
-      setStatus(`Withdrew all ${asset}. Tx ${hash.slice(0, 10)}…`)
+        asset === 'ETH'
+          ? await withdrawAllEth(vault, address)
+          : await withdrawAllUsdc(vault, address)
+      setStatus(`Withdrew all ${asset} (confirmed)`)
+      setStatusTx(hash)
       setWithdrawAmount('')
       setModal(null)
       await refresh()
     } catch (e2) {
-      setErr(e2?.shortMessage || e2?.message || 'Withdraw failed')
+      setErr(humanTxError(e2, 'Withdraw failed'))
       setStatus(null)
+      setStatusTx(null)
     } finally {
       setBusy(null)
     }
@@ -229,11 +243,12 @@ export function VaultPage() {
   return (
     <>
       <DashShell>
+        <NetworkBanner />
         <div className="dash-header">
           <div>
             <h1 className="dash-title">Vault</h1>
             <p className="dash-subtitle">
-              Deposit, withdraw, and track activity in one place
+              Deposit, withdraw, and track confirmed on-chain activity
               {chainName ? ` · ${chainName}` : ''}
             </p>
           </div>
@@ -347,6 +362,19 @@ export function VaultPage() {
                 {status && (
                   <p className="rounded-xl border border-line bg-surface px-4 py-2.5 font-mono text-[12px] text-ink-soft">
                     {status}
+                    {statusTx ? (
+                      <>
+                        {' '}
+                        <a
+                          href={explorerTxUrl(statusTx)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-teal hover:underline"
+                        >
+                          {statusTx.slice(0, 10)}…↗
+                        </a>
+                      </>
+                    ) : null}
                   </p>
                 )}
                 {err && <p className="alert-error">{err}</p>}
@@ -541,4 +569,18 @@ function trimAmt(value, maxDecimals = 4) {
   const n = Number(value)
   if (!Number.isFinite(n)) return value
   return n.toLocaleString(undefined, { maximumFractionDigits: maxDecimals })
+}
+
+function humanTxError(err, fallback) {
+  const msg = String(err?.shortMessage || err?.message || fallback)
+  if (/user rejected|denied|ACTION_REJECTED/i.test(msg)) {
+    return 'Transaction rejected in MetaMask'
+  }
+  if (/insufficient funds|exceeds balance/i.test(msg)) {
+    return 'Insufficient funds for this transaction'
+  }
+  if (/network| eth_ |timeout|429/i.test(msg)) {
+    return 'Network error — check you are on Sepolia and try again'
+  }
+  return msg || fallback
 }

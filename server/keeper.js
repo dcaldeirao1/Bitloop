@@ -158,11 +158,27 @@ function inUtcWindow(startHour, endHour, hour = new Date().getUTCHours()) {
   return hour >= s || hour < e
 }
 
+/** Soft gate: open for `windowMinutes` after the target UTC HH:MM (default 20m). */
+function atUtcTime(hour, minute, now = new Date(), windowMinutes = 20) {
+  const h = Number(hour)
+  const m = Number(minute)
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return true
+  const nowMins = now.getUTCHours() * 60 + now.getUTCMinutes()
+  const targetMins = ((h % 24) + 24) % 24 * 60 + ((m % 60) + 60) % 60
+  let delta = nowMins - targetMins
+  if (delta < 0) delta += 24 * 60
+  return delta < windowMinutes
+}
+
 function passesTriggerGates(trigger, ctx) {
   if (!trigger?.type) return true
   const t = trigger.type
 
   if (t === 'time_window') {
+    // New shape: specific HH:MM. Legacy: startHour/endHour window.
+    if (trigger.hour != null || trigger.minute != null) {
+      return atUtcTime(trigger.hour ?? 0, trigger.minute ?? 0, ctx.now || new Date())
+    }
     return inUtcWindow(trigger.startHour, trigger.endHour, ctx.hourUtc)
   }
 
@@ -409,6 +425,7 @@ function classifyAutomationKind(row) {
   if (
     type === 'send_amount' ||
     type === 'send_token' ||
+    type === 'bridge_relay' ||
     trigger.type === 'every_interval' ||
     trigger.type === 'time_window' ||
     trigger.type === 'usdc_above'
@@ -607,7 +624,7 @@ async function main() {
       const softPaused = await loadSoftPauseMap(supabase)
       const ethPriceUsd = await fetchEthPriceUsd()
       const hourUtc = new Date().getUTCHours()
-      const gateBase = { ethPriceUsd, hourUtc }
+      const gateBase = { ethPriceUsd, hourUtc, now: new Date() }
 
       const count = Number(await factory.accountCount())
       for (let i = 0; i < count; i++) {

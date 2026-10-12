@@ -132,6 +132,7 @@ export function automationKind(action = {}, trigger = {}) {
   if (
     type === 'send_amount' ||
     type === 'send_token' ||
+    type === 'bridge_relay' ||
     trigger.type === 'every_interval' ||
     trigger.type === 'time_window' ||
     trigger.type === 'usdc_above'
@@ -234,6 +235,23 @@ export function describeAutomation(a) {
     return `${every}, buy ETH with ${amount} USDC`
   }
 
+  if (a.action?.type === 'bridge_relay') {
+    const amount = a.action?.amountHuman ?? a.action?.amount ?? '?'
+    const every =
+      a.trigger?.label ||
+      (a.trigger?.interval
+        ? formatIntervalLabel(a.trigger.intervalValue, a.trigger.intervalUnit, a.trigger.interval)
+        : 'on a schedule')
+    const to = a.action?.recipient
+      ? truncateAddress(a.action.recipient)
+      : dest
+    const fromSym = a.action?.originSymbol || a.action?.originToken || 'TOKEN'
+    const toSym = a.action?.destinationSymbol || a.action?.destinationToken || 'TOKEN'
+    const from = a.action?.originChainId ?? '?'
+    const chain = a.action?.destinationChainId ?? '?'
+    return `${every}, bridge ${amount} ${fromSym} (${from} → ${toSym} on ${chain}) to ${to}`
+  }
+
   if (
     a.trigger?.type === 'every_interval' ||
     a.trigger?.type === 'time_window' ||
@@ -247,7 +265,7 @@ export function describeAutomation(a) {
     const every =
       a.trigger?.label ||
       (a.trigger?.interval
-        ? `every ${formatIntervalLabel(a.trigger.intervalValue, a.trigger.intervalUnit, a.trigger.interval)}`
+        ? formatIntervalLabel(a.trigger.intervalValue, a.trigger.intervalUnit, a.trigger.interval)
         : 'on a schedule')
     const asset =
       a.action?.type === 'send_token'

@@ -2,6 +2,7 @@ import {
   getAutomationBlocks,
   getAutomationFunding,
   getAutomationSchedule,
+  getAutomationStatus,
 } from '../lib/automationBlocks'
 
 function FlowWire({ tone = 'teal' }) {
@@ -93,6 +94,7 @@ export function AutomationCard({
 }) {
   const funding = getAutomationFunding(rule, balances)
   const starved = Boolean(funding.starved)
+  const status = getAutomationStatus(rule, balances, onchainTiming)
   const visuallyPaused = !rule.enabled || starved
   const schedule = getAutomationSchedule(rule, onchainTiming, funding)
   const hasDetail = Boolean(
@@ -110,13 +112,9 @@ export function AutomationCard({
     >
       <div className="automation-card-top">
         <div className="automation-card-lead">
-          <span
-            className={`status-pill ${
-              starved ? 'is-warn' : rule.enabled ? 'is-on' : ''
-            }`}
-          >
+          <span className={`status-pill ${status.tone}`}>
             <span className="status-dot" aria-hidden="true" />
-            {visuallyPaused ? 'Paused' : 'Active'}
+            {status.label}
           </span>
           <div className="automation-schedule" title="Execution timing">
             <span>
@@ -145,9 +143,14 @@ export function AutomationCard({
             disabled={busy}
             onClick={onToggleEnabled}
           >
-            {rule.enabled ? 'Pause' : 'Resume'}
+            {busy ? 'Confirm…' : rule.enabled ? 'Pause' : 'Resume'}
           </button>
-          <button type="button" className="flow-action is-danger" onClick={onDelete}>
+          <button
+            type="button"
+            className="flow-action is-danger"
+            disabled={busy}
+            onClick={onDelete}
+          >
             Delete
           </button>
         </div>
@@ -155,7 +158,11 @@ export function AutomationCard({
 
       {starved ? (
         <p className="automation-fund-warn" role="status">
-          Vault is out of funds
+          {funding.warning || 'Vault needs funds for the next run'}
+        </p>
+      ) : funding.warning ? (
+        <p className="automation-fund-warn" role="status">
+          {funding.warning}
         </p>
       ) : null}
 

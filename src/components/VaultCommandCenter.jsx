@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom'
 import {
   getAutomationBlocks,
   getAutomationFunding,
+  getAutomationStatus,
   getAutomationTitle,
+  getReservedFunds,
 } from '../lib/automationBlocks'
 import { truncateAddress } from '../lib/automations'
 
@@ -100,13 +102,34 @@ export function VaultCommandCenter({
       ? trimAmt(balances.vaultEthFormatted, 5)
       : '—'
 
+  const reserved = useMemo(
+    () => getReservedFunds(rules, balances),
+    [rules, balances],
+  )
+  const availableLine =
+    !loadingBalances && balances
+      ? `${trimAmt(reserved.availableUsdc)} USDC available · ${trimAmt(reserved.availableEth, 5)} ETH available`
+      : null
+
   const nodes = useMemo(() => {
-    // Live first so the constellation reads active → quiet
+    // Live / needs-attention first so the constellation reads active → quiet
     return [...rules]
-      .sort((a, b) => Number(b.enabled) - Number(a.enabled))
+      .sort((a, b) => {
+        const aLive = a.enabled && !getAutomationFunding(a, balances).starved ? 1 : 0
+        const bLive = b.enabled && !getAutomationFunding(b, balances).starved ? 1 : 0
+        if (bLive !== aLive) return bLive - aLive
+        return Number(b.enabled) - Number(a.enabled)
+      })
       .slice(0, 8)
-  }, [rules])
+  }, [rules, balances])
   const count = nodes.length
+  const attentionCount = useMemo(
+    () =>
+      rules.filter(
+        (r) => r.enabled && getAutomationFunding(r, balances).starved,
+      ).length,
+    [rules, balances],
+  )
 
   const stageRef = useRef(null)
   const vaultRef = useRef(null)
@@ -199,6 +222,12 @@ export function VaultCommandCenter({
             <h2 className="money-os-chrome-title">Main Vault</h2>
             <p className="money-os-chrome-meta">
               {activeCount} active
+              {attentionCount > 0 ? (
+                <>
+                  <span className="money-os-dot" aria-hidden="true" />
+                  {attentionCount} need attention
+                </>
+              ) : null}
               <span className="money-os-dot" aria-hidden="true" />
               {rules.length} connected
             </p>
@@ -269,6 +298,14 @@ export function VaultCommandCenter({
               </>
             ) : null}
           </p>
+          {availableLine ? (
+            <p className="money-os-vault-available" title="Balance minus max next scheduled spend">
+              {availableLine}
+              {reserved.reservedUsdc > 0 || reserved.reservedEth > 0
+                ? ` · reserved for schedules`
+                : ''}
+            </p>
+          ) : null}
           <div className="money-os-vault-actions">
             <Link to="/app/vault" className="btn-outline money-os-vault-btn">
               Open vault
@@ -281,10 +318,11 @@ export function VaultCommandCenter({
           const { trigger, action } = nodeSummary(rule)
           const title = getAutomationTitle(rule)
           const funding = getAutomationFunding(rule, balances)
+          const status = getAutomationStatus(rule, balances)
           const starved = Boolean(funding.starved)
-          const live = rule.enabled && !starved
+          const live = status.id === 'active' || status.id === 'due'
           const detail = starved
-            ? 'Vault is out of funds'
+            ? funding.warning || 'Needs funds'
             : action || trigger
 
           return (
@@ -305,11 +343,21 @@ export function VaultCommandCenter({
               <span className="money-os-node-top">
                 <span
                   className={`money-os-node-pill ${
-                    starved ? 'is-warn' : live ? 'is-on' : ''
+                    status.tone === 'is-warn'
+                      ? 'is-warn'
+                      : live
+                        ? 'is-on'
+                        : ''
                   }`}
                 >
                   <span className={`status-dot ${live ? 'is-on' : ''}`} />
-                  {live ? 'Live' : 'Paused'}
+                  {status.id === 'needs_attention'
+                    ? 'Attention'
+                    : status.id === 'due'
+                      ? 'Due'
+                      : live
+                        ? 'Live'
+                        : 'Paused'}
                 </span>
               </span>
               <span className="money-os-node-title">{title}</span>

@@ -14,6 +14,10 @@ import {
   liveRefreshMarks,
   liveScanAndEnter,
   liveSessionMetrics,
+  loadSandboxSession,
+  positionDisplayMultiple,
+  positionExitPath,
+  saveSandboxSession,
   stopLiveSession,
   strategyFromConfig,
   strategyFromRule,
@@ -26,13 +30,31 @@ function tone(n) {
   return 'text-muted'
 }
 
+function sandboxTradeBadge(type) {
+  if (type === 'buy') {
+    return { label: 'Buy', className: 'bg-teal-soft text-teal-deep' }
+  }
+  if (type === 'tp') {
+    return { label: 'TP', className: 'bg-teal-soft text-teal-deep' }
+  }
+  if (type === 'stop') {
+    return { label: 'Stop', className: 'bg-bg text-danger' }
+  }
+  if (type === 'close') {
+    return { label: 'Close', className: 'bg-mango-soft text-mango' }
+  }
+  return { label: type || 'Trade', className: 'bg-bg text-ink-soft' }
+}
+
 function Metric({ label, value, valueClass = '' }) {
   return (
     <div className="rounded-xl border border-line bg-bg px-3 py-3">
       <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted">
         {label}
       </p>
-      <p className={`mt-1 font-mono text-[1.05rem] font-semibold text-ink ${valueClass}`}>
+      <p
+        className={`mt-1 font-mono text-[1.05rem] font-semibold ${valueClass || 'text-ink'}`}
+      >
         {value}
       </p>
     </div>
@@ -45,9 +67,12 @@ function Metric({ label, value, valueClass = '' }) {
 export function TradingSandbox({
   strategyRules = [],
   pendingStrategy = null,
+  pendingRuleId = null,
   initialStrategyId = null,
+  ownerKey = 'anon',
   onClearPending,
   onDeploy,
+  onPersistSandbox = null,
   deploying = false,
 }) {
   const pending = pendingStrategy ? strategyFromConfig(pendingStrategy) : null
@@ -55,7 +80,7 @@ export function TradingSandbox({
   const options = useMemo(() => {
     const list = []
     if (pending) {
-      list.push({ id: 'pending', label: 'Draft (unsaved)', strategy: pending })
+      list.push({ id: 'pending', label: 'Draft (saved)', strategy: pending })
     }
     for (const rule of strategyRules) {
       const s = strategyFromRule(rule)
@@ -108,11 +133,44 @@ export function TradingSandbox({
 
   const selected = options.find((o) => o.id === selectedId) || null
   const strategy = selected?.strategy || null
+  const strategyKey =
+    selectedId === 'pending'
+      ? pendingRuleId || 'draft'
+      : selectedId || pendingRuleId || 'draft'
   const metrics = useMemo(() => liveSessionMetrics(session), [session])
   const isLive = session?.status === 'running'
   const openPositions = session?.positions?.filter((p) => p.status === 'open') || []
   const closedPositions =
     session?.positions?.filter((p) => p.status === 'closed').slice(0, 12) || []
+
+  const persist = (next) => {
+    setSession(next)
+    saveSandboxSession(ownerKey, strategyKey, next)
+    if (onPersistSandbox && strategyKey && strategyKey !== 'draft') {
+      void onPersistSandbox(strategyKey, next)
+    }
+  }
+
+  // Restore saved sandbox for this strategy/wallet (local first, then DB)
+  useEffect(() => {
+    if (!strategyKey || strategyKey === 'draft') {
+      setSession(null)
+      return
+    }
+    const local = loadSandboxSession(ownerKey, strategyKey)
+    if (local) {
+      setSession(local)
+      return
+    }
+    const rule = strategyRules.find((r) => r.id === strategyKey)
+    const fromDb = rule?.action?.sandboxSession
+    if (fromDb) {
+      setSession(fromDb)
+      saveSandboxSession(ownerKey, strategyKey, fromDb)
+    } else {
+      setSession(null)
+    }
+  }, [ownerKey, strategyKey, strategyRules])
 
   const tick = async ({ scan = false } = {}) => {
     const current = sessionRef.current
@@ -125,7 +183,7 @@ export function TradingSandbox({
         next = await liveScanAndEnter(next)
       }
       next = await liveRefreshMarks(next)
-      setSession(next)
+      persist(next)
       if (next.note) setError(next.note)
     } catch (err) {
       setError(err?.message || 'Live sandbox tick failed')
@@ -144,13 +202,14 @@ export function TradingSandbox({
       strategy,
       Number(bankroll) || DEFAULT_BANKROLL_ETH,
     )
-    setSession(next)
+    next.strategyId = strategyKey
+    persist(next)
     sessionRef.current = next
     setBusy(true)
     try {
       let live = await liveScanAndEnter(next)
       live = await liveRefreshMarks(live)
-      setSession(live)
+      persist(live)
       if (live.note) setError(live.note)
       if (!live.positions.some((p) => p.status === 'open')) {
         setError(
@@ -166,19 +225,40 @@ export function TradingSandbox({
   }
 
   const stop = () => {
-    setSession((prev) => (prev ? stopLiveSession(prev) : prev))
+    setSession((prev) => {
+      if (!prev) return prev
+      const next = stopLiveSession(prev)
+      saveSandboxSession(ownerKey, strategyKey, next)
+      if (onPersistSandbox && strategyKey && strategyKey !== 'draft') {
+        void onPersistSandbox(strategyKey, next)
+      }
+      return next
+    })
   }
 
   const onClose = async (pos) => {
     setBusy(true)
     setError(null)
     try {
-      let price = pos.lastPriceUsd
+      let quote = {
+        priceUsd: pos.lastPriceUsd,
+        marketCap: pos.lastMarketCap,
+      }
       const best = await getBestPair(pos.chainId, pos.tokenAddress)
-      if (best?.priceUsd) price = best.priceUsd
+      if (best) {
+        quote = {
+          priceUsd: best.priceUsd || quote.priceUsd,
+          marketCap: best.marketCap || quote.marketCap,
+        }
+      }
       setSession((prev) => {
         if (!prev) return prev
-        return liveClosePosition(prev, pos.id, price)
+        const next = liveClosePosition(prev, pos.id, quote)
+        saveSandboxSession(ownerKey, strategyKey, next)
+        if (onPersistSandbox && strategyKey && strategyKey !== 'draft') {
+          void onPersistSandbox(strategyKey, next)
+        }
+        return next
       })
     } catch (err) {
       setError(err?.message || 'Could not close position')
@@ -205,10 +285,15 @@ export function TradingSandbox({
   }, [pending?.chainId, pending?.buyEth, pending?.minVolume24h, pending?.pairSource])
 
   const canDeploy =
+    Boolean(pendingRuleId) ||
     Boolean(pending) ||
     (selected?.rule && selected.rule.enabled === false)
 
   const handleDeploy = () => {
+    if (pendingRuleId) {
+      onDeploy?.(null, { id: pendingRuleId, enabled: false })
+      return
+    }
     if (pending) {
       onDeploy?.(pendingStrategy)
       return
@@ -237,7 +322,7 @@ export function TradingSandbox({
               New strategy ready
             </p>
             <p className="mt-1 text-[15px] font-semibold tracking-tight text-ink">
-              Paper-trade live, then deploy when you’re happy
+              Paper-trade live, then enable live scan tracking
             </p>
             <p className="mt-1 text-[12px] text-muted">{describeStrategy(pending)}</p>
           </div>
@@ -253,7 +338,7 @@ export function TradingSandbox({
               disabled={deploying}
               onClick={handleDeploy}
             >
-              {deploying ? 'Deploying…' : 'Deploy strategy'}
+              {deploying ? 'Enabling…' : 'Enable live scan (paper)'}
             </button>
           </div>
         </div>
@@ -266,8 +351,8 @@ export function TradingSandbox({
               Live sandbox
             </h3>
             <p className="mt-1 text-[12px] text-muted">
-              Mock ETH only — enter live Discover matches at current price, then manage
-              TP / stop as DexScreener marks update.
+              Mock ETH only — paper positions at live DexScreener prices. Does not spend
+              vault funds.
             </p>
           </div>
           <div className="flex flex-wrap items-end gap-2">
@@ -409,7 +494,8 @@ export function TradingSandbox({
           {pending && !isLive ? (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3">
               <p className="text-[13px] text-muted">
-                Ready to go live with vault funds?
+                Enable keeper paper tracking (live prices, mock bankroll — not vault
+                swaps)?
               </p>
               <button
                 type="button"
@@ -417,7 +503,7 @@ export function TradingSandbox({
                 disabled={deploying}
                 onClick={handleDeploy}
               >
-                {deploying ? 'Deploying…' : 'Deploy strategy'}
+                {deploying ? 'Enabling…' : 'Enable live scan (paper)'}
               </button>
             </div>
           ) : null}
@@ -428,7 +514,8 @@ export function TradingSandbox({
                 Open paper positions
               </h3>
               <p className="mt-1 text-[12px] text-muted">
-                Marks from DexScreener · exits fire when live price hits your TP / stop.
+                Market caps from live DexScreener / GeckoTerminal · exits fire when
+                mcap multiple hits your TP / stop.
               </p>
             </div>
 
@@ -447,8 +534,8 @@ export function TradingSandbox({
                   <thead>
                     <tr>
                       <th>Token</th>
-                      <th>Entry</th>
-                      <th>Mark</th>
+                      <th>Entry mcap</th>
+                      <th>Mark mcap</th>
                       <th>Multiple</th>
                       <th>uPnL</th>
                       <th>Age</th>
@@ -458,8 +545,7 @@ export function TradingSandbox({
                   </thead>
                   <tbody>
                     {openPositions.map((pos) => {
-                      const mark = Number(pos.lastPriceUsd) || pos.entryPriceUsd
-                      const multiple = mark / pos.entryPriceUsd
+                      const multiple = positionDisplayMultiple(pos)
                       const remain =
                         pos.tokensInitial > 0
                           ? pos.tokensHeld / pos.tokensInitial
@@ -476,14 +562,22 @@ export function TradingSandbox({
                             </p>
                           </td>
                           <td className="font-mono">
-                            {formatUsdCompact(pos.entryPriceUsd)}
+                            {pos.entryMarketCap > 0
+                              ? formatUsdCompact(pos.entryMarketCap)
+                              : '—'}
                           </td>
-                          <td className="font-mono">{formatUsdCompact(mark)}</td>
-                          <td className={`font-mono ${tone(multiple - 1)}`}>
-                            {multiple.toFixed(2)}×
+                          <td className="font-mono">
+                            {pos.lastMarketCap > 0
+                              ? formatUsdCompact(pos.lastMarketCap)
+                              : '—'}
                           </td>
-                          <td className={`font-mono ${tone(upnl)}`}>
-                            {formatPnlEth(upnl)}
+                          <td className="font-mono">
+                            <span className={tone(multiple - 1)}>
+                              {multiple.toFixed(2)}×
+                            </span>
+                          </td>
+                          <td className="font-mono font-medium">
+                            <span className={tone(upnl)}>{formatPnlEth(upnl)}</span>
                           </td>
                           <td className="font-mono text-muted">
                             {formatAge(pos.openedAt)}
@@ -526,46 +620,155 @@ export function TradingSandbox({
           </section>
 
           {(closedPositions.length > 0 || (session.trades || []).length > 0) && (
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="space-y-4">
               {closedPositions.length > 0 ? (
-                <section className="automation-card">
-                  <h3 className="text-[14px] font-semibold text-ink">Closed</h3>
-                  <ul className="mt-3 space-y-2">
-                    {closedPositions.map((pos) => (
-                      <li
-                        key={pos.id}
-                        className="flex items-center justify-between gap-3 text-[13px]"
-                      >
-                        <span className="text-ink">
-                          {pos.symbol}{' '}
-                          <span className="text-[11px] uppercase text-muted">
-                            {pos.exitReason?.replace('_', ' ')}
-                          </span>
-                        </span>
-                        <span className={`font-mono ${tone(pos.realizedPnlEth)}`}>
-                          {formatPnlEth(pos.realizedPnlEth)}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                <section>
+                  <div className="mb-3">
+                    <h3 className="text-[15px] font-semibold tracking-tight text-ink">
+                      Closed positions
+                    </h3>
+                    <p className="mt-1 text-[12px] text-muted">
+                      Fills use the live mark at poll time — not the exact TP / stop
+                      trigger — so entry, exit mcap, and PnL are the real fill values.
+                    </p>
+                  </div>
+                  <div className="overflow-x-auto rounded-2xl border border-line bg-surface">
+                    <table className="token-table">
+                      <thead>
+                        <tr>
+                          <th>Token</th>
+                          <th>Entry mcap</th>
+                          <th>Exit mcap</th>
+                          <th>Fill</th>
+                          <th>Exact PnL</th>
+                          <th>Exit path</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {closedPositions.map((pos) => {
+                          const exitMcap =
+                            Number(pos.exitMarketCap) || Number(pos.lastMarketCap) || 0
+                          const entryMcap = Number(pos.entryMarketCap) || 0
+                          const fillMult =
+                            Number(pos.exitMultiple) ||
+                            (entryMcap > 0 && exitMcap > 0
+                              ? exitMcap / entryMcap
+                              : 0)
+                          const pnl = Number(pos.realizedPnlEth) || 0
+                          const pnlPct =
+                            pos.costEth > 0 ? (pnl / pos.costEth) * 100 : 0
+                          const path = positionExitPath(pos)
+                          const tpHits = (pos.takeProfits || [])
+                            .map((tp, i) =>
+                              tp.hit ? `TP${i + 1}@${tp.multiple}×` : null,
+                            )
+                            .filter(Boolean)
+                          return (
+                            <tr key={pos.id}>
+                              <td>
+                                <p className="font-medium text-ink">{pos.symbol}</p>
+                                <p className="font-mono text-[11px] text-muted">
+                                  {truncateAddress(pos.tokenAddress, 4)} ·{' '}
+                                  {formatAge(pos.closedAt)}
+                                </p>
+                              </td>
+                              <td className="font-mono">
+                                {entryMcap > 0 ? formatUsdCompact(entryMcap) : '—'}
+                              </td>
+                              <td className="font-mono">
+                                {exitMcap > 0 ? formatUsdCompact(exitMcap) : '—'}
+                              </td>
+                              <td className="font-mono">
+                                <span className={tone(fillMult - 1)}>
+                                  {fillMult > 0 ? `${fillMult.toFixed(3)}×` : '—'}
+                                </span>
+                              </td>
+                              <td className="font-mono font-medium">
+                                <span className={tone(pnl)}>{formatPnlEth(pnl)}</span>
+                                <span className="ml-1 text-muted">
+                                  ({formatPct(pnlPct)})
+                                </span>
+                              </td>
+                              <td>
+                                <p className="font-mono text-[12px] font-medium text-ink">
+                                  {path}
+                                </p>
+                                {tpHits.length > 0 ? (
+                                  <p className="mt-0.5 font-mono text-[11px] text-teal">
+                                    {tpHits.join(' · ')}
+                                    {(pos.fills || []).length > 0
+                                      ? ` · ${(pos.fills || [])
+                                          .map((f) => formatPnlEth(f.pnlEth))
+                                          .join(', ')}`
+                                      : ''}
+                                  </p>
+                                ) : null}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </section>
               ) : null}
 
               {(session.trades || []).length > 0 ? (
-                <section className="automation-card">
-                  <h3 className="text-[14px] font-semibold text-ink">Activity</h3>
-                  <ul className="mt-3 space-y-2">
-                    {session.trades.slice(0, 12).map((t) => (
-                      <li key={t.id} className="text-[12px]">
-                        <span className="font-medium uppercase tracking-wide text-muted">
-                          {t.type}
-                        </span>{' '}
-                        <span className="text-ink">{t.note}</span>
-                        <span className="ml-2 font-mono text-muted">
-                          {formatAge(t.at)}
-                        </span>
-                      </li>
-                    ))}
+                <section>
+                  <div className="mb-3">
+                    <h3 className="text-[15px] font-semibold tracking-tight text-ink">
+                      Activity
+                    </h3>
+                    <p className="mt-1 text-[12px] text-muted">
+                      Paper fills from this sandbox session — buys, take-profits, and
+                      stops.
+                    </p>
+                  </div>
+                  <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
+                    {session.trades.slice(0, 20).map((t) => {
+                      const badge = sandboxTradeBadge(t.type)
+                      return (
+                        <li
+                          key={t.id}
+                          className="flex flex-wrap items-start justify-between gap-3 px-4 py-3"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${badge.className}`}
+                              >
+                                {badge.label}
+                              </span>
+                              <span className="text-[13px] font-medium text-ink">
+                                {t.symbol || 'Trade'}
+                              </span>
+                              {t.targetMultiple != null ? (
+                                <span className="font-mono text-[11px] text-muted">
+                                  target {Number(t.targetMultiple).toFixed(2)}×
+                                </span>
+                              ) : null}
+                            </div>
+                            <p className="mt-1 text-[12px] text-muted">{t.note}</p>
+                            <p className="mt-0.5 text-[11px] text-muted">
+                              {formatAge(t.at)}
+                              {t.multiple != null
+                                ? ` · filled ${Number(t.multiple).toFixed(3)}×`
+                                : ''}
+                            </p>
+                          </div>
+                          <div className="text-right font-mono text-[13px]">
+                            {t.amountEth != null ? (
+                              <p className="text-ink">{formatEth(t.amountEth)} ETH</p>
+                            ) : null}
+                            {t.pnlEth != null ? (
+                              <p className={`mt-0.5 ${tone(t.pnlEth)}`}>
+                                {formatPnlEth(t.pnlEth)}
+                              </p>
+                            ) : null}
+                          </div>
+                        </li>
+                      )
+                    })}
                   </ul>
                 </section>
               ) : null}
@@ -594,14 +797,14 @@ export function StrategyLaunchPanel({
         Strategy created
       </p>
       <h2 className="mt-1 text-[18px] font-semibold tracking-tight text-ink">
-        Test it live, or go live
+        Test in sandbox, or enable paper scan
       </h2>
       <p className="mt-2 text-[13px] text-muted">
         {describeStrategy(strategyFromConfig(strategy))}
       </p>
       <p className="mt-3 text-[13px] text-muted">
-        Sandbox paper-trades live Discover matches with mock ETH — entries and exits
-        use current DexScreener prices, not a historical backtest.
+        Sandbox and “live scan” both use mock ETH with live DexScreener prices.
+        They do not spend vault funds or open real on-chain swaps.
       </p>
       <div className="mt-5 flex flex-wrap gap-2">
         <button type="button" className="flow-action" onClick={onBack}>
@@ -616,7 +819,7 @@ export function StrategyLaunchPanel({
           disabled={deploying}
           onClick={onDeploy}
         >
-          {deploying ? 'Deploying…' : 'Deploy strategy'}
+          {deploying ? 'Enabling…' : 'Enable live scan (paper)'}
         </button>
       </div>
     </div>

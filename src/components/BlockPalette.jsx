@@ -12,7 +12,7 @@ const TRIGGER_GROUPS = [
     label: 'Schedule',
     items: [
       { id: 'every_interval', title: 'Every interval', hint: 'Minutes / hours / days' },
-      { id: 'time_window', title: 'UTC hours', hint: 'Only in a window' },
+      { id: 'time_window', title: 'At time (UTC)', hint: 'Specific HH:MM' },
       { id: 'usdc_above', title: 'USDC above', hint: 'Balance gate' },
     ],
   },
@@ -52,6 +52,17 @@ const ACTION_GROUPS = [
       { id: 'sell_token_eth', title: 'Sell token', hint: 'For ETH' },
     ],
   },
+  {
+    id: 'bridge',
+    label: 'Bridge',
+    items: [
+      {
+        id: 'bridge_relay',
+        title: 'Relay bridge',
+        hint: 'Any token → any token',
+      },
+    ],
+  },
 ]
 
 export function BlockPalette({
@@ -86,7 +97,9 @@ export function BlockPalette({
     if (hasAction) return false
     if (!hasTrigger) return true
     if (id === 'send_percent') return percentTriggers
-    if (id === 'send_amount' || id === 'send_token') return scheduleTriggers
+    if (id === 'send_amount' || id === 'send_token' || id === 'bridge_relay') {
+      return scheduleTriggers
+    }
     return dcaTriggers
   }
 

@@ -71,6 +71,7 @@ async function tokenMeta(provider, tokenAddr, fallbackDecimals = 18) {
 
 /**
  * Fetch recent vault activity: deposits, withdrawals, splits, recurring, DCA.
+ * Only includes confirmed on-chain logs — never fabricated rows.
  */
 export async function fetchVaultHistory(
   vaultAddress,
@@ -93,16 +94,16 @@ export async function fetchVaultHistory(
 
   const decimals = Number(await erc20.decimals().catch(() => 6))
 
-  // DcaExecuted must NOT filter by tokenIn — ETH→token uses tokenIn=address(0)
+  // RecurringExecuted / DcaExecuted: do not filter by USDC only
   const [ins, outs, splits, recurrings, dcas, ethIns] = await Promise.all([
     queryFilterRange(erc20, erc20.filters.Transfer(null, vault), fromBlock, latest),
     queryFilterRange(erc20, erc20.filters.Transfer(vault, null), fromBlock, latest),
-    queryFilterRange(account, account.filters.TokenSplit(tokenAddr), fromBlock, latest).catch(
+    queryFilterRange(account, account.filters.TokenSplit(), fromBlock, latest).catch(
       () => [],
     ),
     queryFilterRange(
       account,
-      account.filters.RecurringExecuted(tokenAddr),
+      account.filters.RecurringExecuted(),
       fromBlock,
       latest,
     ).catch(() => []),
@@ -115,6 +116,16 @@ export async function fetchVaultHistory(
     ...recurrings.map((e) => e.transactionHash),
     ...dcas.map((e) => e.transactionHash),
   ])
+
+  const metaCache = new Map()
+  const metaOf = async (addr, fallbackDecimals = 18) => {
+    if (isZero(addr)) return { decimals: 18, symbol: 'ETH' }
+    const key = getAddress(addr)
+    if (!metaCache.has(key)) {
+      metaCache.set(key, tokenMeta(provider, key, fallbackDecimals))
+    }
+    return metaCache.get(key)
+  }
 
   const items = []
 
@@ -130,12 +141,14 @@ export async function fetchVaultHistory(
       txHash: ev.transactionHash,
       blockNumber: ev.blockNumber,
       logIndex: ev.index,
+      status: 'confirmed',
     })
   }
 
   for (const ev of ethIns) {
     const amount = ev.args.amount
     if (!amount || amount === 0n) continue
+    const sent = ev.args.sentToSavings
     items.push({
       id: `${ev.transactionHash}-ethin-${ev.index}`,
       type: 'deposit',
@@ -147,7 +160,29 @@ export async function fetchVaultHistory(
       txHash: ev.transactionHash,
       blockNumber: ev.blockNumber,
       logIndex: ev.index,
+      status: 'confirmed',
+      splitNote:
+        sent && sent > 0n
+          ? `${formatUnits(sent, 18)} ETH forwarded to savings`
+          : null,
     })
+    if (sent && sent > 0n) {
+      items.push({
+        id: `${ev.transactionHash}-ethsplit-${ev.index}`,
+        type: 'split',
+        label: 'ETH income split',
+        amount: sent,
+        amountFormatted: formatUnits(sent, 18),
+        amountAsset: 'ETH',
+        incoming: amount,
+        incomingFormatted: formatUnits(amount, 18),
+        counterparty: savingsAddress,
+        txHash: ev.transactionHash,
+        blockNumber: ev.blockNumber,
+        logIndex: ev.index + 0.1,
+        status: 'confirmed',
+      })
+    }
   }
 
   for (const ev of outs) {
@@ -163,47 +198,63 @@ export async function fetchVaultHistory(
       txHash: ev.transactionHash,
       blockNumber: ev.blockNumber,
       logIndex: ev.index,
+      status: 'confirmed',
     })
   }
 
   for (const ev of splits) {
+    const splitToken = ev.args.token
     const incoming = ev.args.incoming
     const sent = ev.args.sentToSavings
+    const ethSplit = isZero(splitToken)
+    const meta = ethSplit
+      ? { decimals: 18, symbol: 'ETH' }
+      : sameAddr(splitToken, tokenAddr)
+        ? { decimals, symbol: 'USDC' }
+        : await metaOf(splitToken, 6)
     items.push({
       id: `${ev.transactionHash}-split-${ev.index}`,
       type: 'split',
-      label: 'Automation split',
+      label: ethSplit ? 'ETH income split' : 'Automation split',
       amount: sent,
-      amountFormatted: formatUnits(sent, decimals),
-      amountAsset: 'USDC',
+      amountFormatted: formatUnits(sent, meta.decimals),
+      amountAsset: meta.symbol,
       incoming,
-      incomingFormatted: formatUnits(incoming, decimals),
+      incomingFormatted: formatUnits(incoming, meta.decimals),
       counterparty: savingsAddress,
       txHash: ev.transactionHash,
       blockNumber: ev.blockNumber,
       logIndex: ev.index,
       caller: ev.args.caller,
+      status: 'confirmed',
     })
   }
 
   for (const ev of recurrings) {
     const amount = ev.args.amount
+    const recToken = ev.args.token
+    const ethRec = isZero(recToken)
+    const meta = ethRec
+      ? { decimals: 18, symbol: 'ETH' }
+      : sameAddr(recToken, tokenAddr)
+        ? { decimals, symbol: 'USDC' }
+        : await metaOf(recToken, 6)
     items.push({
       id: `${ev.transactionHash}-recurring-${ev.index}`,
       type: 'recurring',
       label: 'Scheduled send',
       amount,
-      amountFormatted: formatUnits(amount, decimals),
-      amountAsset: 'USDC',
+      amountFormatted: formatUnits(amount, meta.decimals),
+      amountAsset: meta.symbol,
       counterparty: ev.args.to,
       txHash: ev.transactionHash,
       blockNumber: ev.blockNumber,
       logIndex: ev.index,
       caller: ev.args.caller,
+      status: 'confirmed',
     })
   }
 
-  const outMetaCache = new Map()
   for (const ev of dcas) {
     const tokenIn = ev.args.tokenIn
     const tokenOut = ev.args.tokenOut
@@ -212,29 +263,26 @@ export async function fetchVaultHistory(
     const ethIn = isZero(tokenIn)
     const ethOut = isZero(tokenOut)
 
-    let outMeta = { decimals: 18, symbol: 'ETH' }
-    if (!ethOut) {
-      const key = getAddress(tokenOut)
-      if (!outMetaCache.has(key)) {
-        outMetaCache.set(key, tokenMeta(provider, key, 18))
-      }
-      outMeta = await outMetaCache.get(key)
-    }
+    const inMeta = ethIn
+      ? { decimals: 18, symbol: 'ETH' }
+      : sameAddr(tokenIn, tokenAddr)
+        ? { decimals, symbol: 'USDC' }
+        : await metaOf(tokenIn, 6)
 
-    const inDecimals = ethIn ? 18 : decimals
-    const inAsset = ethIn ? 'ETH' : 'USDC'
-    const outLabel = ethOut ? 'ETH' : outMeta.symbol
+    const outMeta = ethOut
+      ? { decimals: 18, symbol: 'ETH' }
+      : await metaOf(tokenOut, 18)
 
     items.push({
       id: `${ev.transactionHash}-dca-${ev.index}`,
       type: 'dca',
       label: 'DCA swap',
       amount: amountIn,
-      amountFormatted: formatUnits(amountIn, inDecimals),
-      amountAsset: inAsset,
+      amountFormatted: formatUnits(amountIn, inMeta.decimals),
+      amountAsset: inMeta.symbol,
       amountOut,
-      amountOutFormatted: formatUnits(amountOut, ethOut ? 18 : outMeta.decimals),
-      amountOutAsset: outLabel,
+      amountOutFormatted: formatUnits(amountOut, outMeta.decimals),
+      amountOutAsset: outMeta.symbol,
       tokenOut: ethOut ? null : getAddress(tokenOut),
       ethOut: ethOut ? amountOut : null,
       ethOutFormatted: ethOut ? formatUnits(amountOut, 18) : null,
@@ -242,6 +290,7 @@ export async function fetchVaultHistory(
       blockNumber: ev.blockNumber,
       logIndex: ev.index,
       caller: ev.args.caller,
+      status: 'confirmed',
     })
   }
 
@@ -266,9 +315,38 @@ export async function fetchVaultHistory(
   return items
 }
 
+function sameAddr(a, b) {
+  try {
+    return getAddress(a) === getAddress(b)
+  } catch {
+    return false
+  }
+}
+
 export function formatHistoryTime(timestamp) {
   if (!timestamp) return '—'
   return new Date(timestamp * 1000).toLocaleString()
+}
+
+/** Compact relative time for activity rows (e.g. "3m ago"). */
+export function formatHistoryRelative(timestamp) {
+  if (!timestamp) return '—'
+  const ms = Number(timestamp) * 1000
+  if (!Number.isFinite(ms)) return '—'
+  const delta = Date.now() - ms
+  if (delta < 0) return 'just now'
+  const sec = Math.floor(delta / 1000)
+  if (sec < 45) return 'just now'
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}m ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h ago`
+  const day = Math.floor(hr / 24)
+  if (day < 7) return `${day}d ago`
+  return new Date(ms).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  })
 }
 
 export function explorerTxUrl(txHash, chainId = 11155111) {
@@ -278,17 +356,21 @@ export function explorerTxUrl(txHash, chainId = 11155111) {
 
 export function historySubtitle(item) {
   if (item.type === 'split') {
-    return `Received ${item.incomingFormatted} → sent ${item.amountFormatted} to savings`
+    return `Received ${item.incomingFormatted} ${item.amountAsset || ''} → sent ${item.amountFormatted} to savings`.replace(
+      /\s+/g,
+      ' ',
+    ).trim()
   }
   if (item.type === 'recurring') {
-    return `Sent ${item.amountFormatted} USDC to ${truncateAddress(item.counterparty, 4)}`
+    return `Scheduled send to ${truncateAddress(item.counterparty, 4)}`
   }
   if (item.type === 'dca') {
     const out = item.amountOutAsset || (item.tokenOut ? truncateAddress(item.tokenOut, 4) : 'ETH')
-    return `Swapped ${item.amountFormatted} ${item.amountAsset || 'USDC'} → ${item.amountOutFormatted} ${out}`
+    return `${item.amountFormatted} ${item.amountAsset || 'USDC'} swapped for ${item.amountOutFormatted} ${out}`
   }
   if (item.type === 'deposit') {
-    return `From ${truncateAddress(item.counterparty, 4)}`
+    const base = `From ${truncateAddress(item.counterparty, 4)}`
+    return item.splitNote ? `${base} · ${item.splitNote}` : base
   }
   if (item.type === 'withdraw') {
     return `To ${truncateAddress(item.counterparty, 4)}`

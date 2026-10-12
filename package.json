@@ -1,5 +1,5 @@
 {
-  "name": "programmablemoney",
+  "name": "bitloop",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -15,11 +15,13 @@
     "contracts:deploy:sepolia": "hardhat run scripts/deploy.cjs --network sepolia"
   },
   "dependencies": {
+    "@nktkas/hyperliquid": "^0.32.2",
     "@supabase/supabase-js": "^2.57.4",
     "cors": "^2.8.5",
     "dotenv": "^17.2.2",
     "ethers": "^6.17.0",
     "express": "^5.1.0",
+    "lightweight-charts": "^5.2.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.4",

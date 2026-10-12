@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
+import { BrandLogo } from '../components/BrandLogo'
 import { useAuth } from '../context/AuthContext'
 
 export function SignUp() {
@@ -140,9 +141,7 @@ function AuthShell({ title, subtitle, footer, children }) {
   return (
     <div className="flex min-h-screen flex-col bg-bg">
       <header className="mx-auto flex w-full max-w-5xl items-center justify-between px-6 py-5">
-        <Link to="/" className="text-[15px] font-semibold tracking-tight text-ink">
-          Programmable Money
-        </Link>
+        <BrandLogo to="/" size="nav" />
         <Link to="/" className="text-[13px] text-muted hover:text-ink">
           Back
         </Link>

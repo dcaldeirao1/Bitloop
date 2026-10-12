@@ -21,7 +21,7 @@ function sameToken(a, b) {
  */
 export function getAutomationFunding(rule, balances) {
   if (!rule?.enabled || !balances) {
-    return { starved: false, warning: null }
+    return { starved: false, warning: null, asset: null, need: null }
   }
 
   const action = rule.action || {}
@@ -36,55 +36,128 @@ export function getAutomationFunding(rule, balances) {
     trigger === 'receive_usdc' ||
     trigger === 'receive_eth'
   ) {
-    return { starved: false, warning: null }
+    return { starved: false, warning: null, asset: null, need: null }
   }
 
   const need = neededAmount(action)
-  if (need == null) return { starved: false, warning: null }
+  if (need == null) return { starved: false, warning: null, asset: null, need: null }
 
   const usdc = Number(balances.vaultUsdcFormatted)
   const eth = Number(balances.vaultEthFormatted)
-  const warn = { starved: true, warning: 'Vault is out of funds' }
+  const warn = (asset) => ({
+    starved: true,
+    warning: `Vault needs ≥ ${need} ${asset} for the next run`,
+    asset,
+    need,
+  })
 
   if (type === 'send_amount' || type === 'buy_eth') {
-    if (Number.isFinite(usdc) && usdc + 1e-12 < need) return warn
-    return { starved: false, warning: null }
+    if (Number.isFinite(usdc) && usdc + 1e-12 < need) return warn('USDC')
+    return { starved: false, warning: null, asset: 'USDC', need }
   }
 
-  if (
-    type === 'dca_swap' ||
-    type === 'swap_usdc_eth'
-  ) {
+  if (type === 'bridge_relay') {
+    const originSym = String(action.originSymbol || action.originToken || '').toUpperCase()
+    const originCur = String(action.originCurrency || action.token || '').toLowerCase()
+    if (originSym === 'USDC' || sameToken(originCur, USDC_ADDR)) {
+      if (Number.isFinite(usdc) && usdc + 1e-12 < need) return warn('USDC')
+      return { starved: false, warning: null, asset: 'USDC', need }
+    }
+    return {
+      starved: false,
+      warning: `Balance for ${originSym || 'token'} not shown — fund the vault before the next run`,
+      asset: originSym || null,
+      need,
+    }
+  }
+
+  if (type === 'dca_swap' || type === 'swap_usdc_eth') {
     const spendsEth = action.outMode === 'token' || Boolean(action.tokenOut)
     if (spendsEth) {
-      if (Number.isFinite(eth) && eth + 1e-12 < need) return warn
-    } else if (Number.isFinite(usdc) && usdc + 1e-12 < need) {
-      return warn
+      if (Number.isFinite(eth) && eth + 1e-12 < need) return warn('ETH')
+      return { starved: false, warning: null, asset: 'ETH', need }
     }
-    return { starved: false, warning: null }
+    if (Number.isFinite(usdc) && usdc + 1e-12 < need) return warn('USDC')
+    return { starved: false, warning: null, asset: 'USDC', need }
   }
 
   if (type === 'buy_token' || type === 'sell_eth_usdc') {
-    if (Number.isFinite(eth) && eth + 1e-12 < need) return warn
-    return { starved: false, warning: null }
+    if (Number.isFinite(eth) && eth + 1e-12 < need) return warn('ETH')
+    return { starved: false, warning: null, asset: 'ETH', need }
   }
 
   if (type === 'sell_token_eth') {
     if (sameToken(action.tokenIn, USDC_ADDR)) {
-      if (Number.isFinite(usdc) && usdc + 1e-12 < need) return warn
+      if (Number.isFinite(usdc) && usdc + 1e-12 < need) return warn('USDC')
+      return { starved: false, warning: null, asset: 'USDC', need }
     }
-    // Non-USDC token balances aren't loaded on the dashboard — skip
-    return { starved: false, warning: null }
+    const sym = action.tokenSymbol || 'token'
+    return {
+      starved: false,
+      warning: `Balance for ${sym} not shown — fund the vault before the next run`,
+      asset: sym,
+      need,
+    }
   }
 
   if (type === 'send_token') {
     if (sameToken(action.token, USDC_ADDR)) {
-      if (Number.isFinite(usdc) && usdc + 1e-12 < need) return warn
+      if (Number.isFinite(usdc) && usdc + 1e-12 < need) return warn('USDC')
+      return { starved: false, warning: null, asset: 'USDC', need }
     }
-    return { starved: false, warning: null }
+    const sym = action.tokenSymbol || 'token'
+    return {
+      starved: false,
+      warning: `Balance for ${sym} not shown — fund the vault before the next run`,
+      asset: sym,
+      need,
+    }
   }
 
-  return { starved: false, warning: null }
+  return { starved: false, warning: null, asset: null, need: null }
+}
+
+/**
+ * Reserved = max next-run need among enabled scheduled automations (USDC / ETH).
+ * Splits are deposit-triggered and do not reserve idle balance.
+ */
+export function getReservedFunds(rules, balances) {
+  let usdc = 0
+  let eth = 0
+  for (const rule of rules || []) {
+    if (!rule?.enabled) continue
+    const funding = getAutomationFunding(rule, balances || { vaultUsdcFormatted: '0', vaultEthFormatted: '0' })
+    const need = funding.need
+    if (need == null || !Number.isFinite(need)) continue
+    if (funding.asset === 'USDC') usdc = Math.max(usdc, need)
+    if (funding.asset === 'ETH') eth = Math.max(eth, need)
+  }
+  const vaultUsdc = Number(balances?.vaultUsdcFormatted)
+  const vaultEth = Number(balances?.vaultEthFormatted)
+  return {
+    reservedUsdc: usdc,
+    reservedEth: eth,
+    availableUsdc: Number.isFinite(vaultUsdc) ? Math.max(0, vaultUsdc - usdc) : null,
+    availableEth: Number.isFinite(vaultEth) ? Math.max(0, vaultEth - eth) : null,
+  }
+}
+
+/**
+ * Product status: active | paused | needs_attention | due
+ */
+export function getAutomationStatus(rule, balances, onchainTiming = null) {
+  if (!rule?.enabled) {
+    return { id: 'paused', label: 'Paused', tone: '' }
+  }
+  const funding = getAutomationFunding(rule, balances)
+  if (funding.starved) {
+    return { id: 'needs_attention', label: 'Needs attention', tone: 'is-warn' }
+  }
+  const schedule = getAutomationSchedule(rule, onchainTiming, funding)
+  if (schedule.nextLabel === 'Due now') {
+    return { id: 'due', label: 'Due', tone: 'is-due' }
+  }
+  return { id: 'active', label: 'Active', tone: 'is-on' }
 }
 
 /**
@@ -105,9 +178,10 @@ export function getAutomationTitle(rule) {
     return 'Buy ETH'
   }
   if (type === 'send_token') return 'Token transfer'
+  if (type === 'bridge_relay') return 'Relay bridge'
   if (type === 'send_amount') {
     if (trigger === 'usdc_above') return 'Balance payout'
-    if (trigger === 'time_window') return 'Windowed transfer'
+    if (trigger === 'time_window') return 'Timed transfer'
     if (trigger === 'eth_price_below' || trigger === 'eth_price_above') {
       return 'Price payout'
     }
@@ -189,7 +263,11 @@ export function getAutomationBlocks(rule) {
     if (trigger.type === 'eth_price_above') ifLines.unshift(`ETH ≥ $${trigger.priceUsd}`)
     if (trigger.type === 'usdc_above') ifLines.unshift(`USDC ≥ ${trigger.amount}`)
     if (trigger.type === 'time_window') {
-      ifLines.unshift(`UTC ${trigger.startHour}–${trigger.endHour}`)
+      const hour = trigger.hour ?? trigger.startHour ?? 0
+      const minute = trigger.minute ?? 0
+      const hh = String(hour).padStart(2, '0')
+      const mm = String(minute).padStart(2, '0')
+      ifLines.unshift(`At ${hh}:${mm} UTC`)
     }
 
     let swapLines
@@ -217,6 +295,7 @@ export function getAutomationBlocks(rule) {
   if (
     type === 'send_amount' ||
     type === 'send_token' ||
+    type === 'bridge_relay' ||
     trigger.type === 'every_interval' ||
     trigger.type === 'usdc_above' ||
     trigger.type === 'time_window'
@@ -229,10 +308,34 @@ export function getAutomationBlocks(rule) {
     const ifLines = [every]
     if (trigger.type === 'usdc_above') ifLines.unshift(`USDC ≥ ${trigger.amount}`)
     if (trigger.type === 'time_window') {
-      ifLines.unshift(`UTC ${trigger.startHour}–${trigger.endHour}`)
+      const hour = trigger.hour ?? trigger.startHour ?? 0
+      const minute = trigger.minute ?? 0
+      const hh = String(hour).padStart(2, '0')
+      const mm = String(minute).padStart(2, '0')
+      ifLines.unshift(`At ${hh}:${mm} UTC`)
     }
     if (trigger.type === 'eth_price_below') ifLines.unshift(`ETH ≤ $${trigger.priceUsd}`)
     if (trigger.type === 'eth_price_above') ifLines.unshift(`ETH ≥ $${trigger.priceUsd}`)
+
+    if (type === 'bridge_relay') {
+      const fromSym = action.originSymbol || action.originToken || 'TOKEN'
+      const toSym = action.destinationSymbol || action.destinationToken || 'TOKEN'
+      return {
+        kind: 'recurring',
+        ifBlock: { title: 'When', lines: ifLines },
+        thenBlocks: [
+          {
+            title: 'Bridge',
+            lines: [
+              `${action.amountHuman || '?'} ${fromSym}`,
+              `→ ${toSym}`,
+              `to ${truncateAddress(action.recipient || action.to, 4)}`,
+            ],
+          },
+        ],
+      }
+    }
+
     const asset =
       type === 'send_token'
         ? action.tokenSymbol || truncateAddress(action.token, 4)
@@ -311,7 +414,11 @@ export function getAutomationSchedule(rule, onchainTiming = null, funding = null
       lastLabel: lastScan
         ? formatTs(Math.floor(new Date(lastScan).getTime() / 1000)) || 'Recently'
         : 'Never',
-      nextLabel: !enabled ? 'Paused' : starved ? 'Out of funds' : 'On next scan',
+      nextLabel: !enabled
+        ? 'Paused'
+        : starved
+          ? 'Needs funds'
+          : 'On next scan',
     }
   }
 
@@ -343,6 +450,7 @@ export function getAutomationSchedule(rule, onchainTiming = null, funding = null
   const isRecurring =
     type === 'send_amount' ||
     type === 'send_token' ||
+    type === 'bridge_relay' ||
     trigger.type === 'every_interval' ||
     trigger.type === 'usdc_above' ||
     trigger.type === 'time_window' ||
@@ -355,7 +463,7 @@ export function getAutomationSchedule(rule, onchainTiming = null, funding = null
     return {
       lastLabel: last ? formatTs(last) || 'Never' : 'Never',
       nextLabel: starved
-        ? 'Out of funds'
+        ? 'Needs funds'
         : nextFromLast(last, interval, enabled),
     }
   }
@@ -366,13 +474,13 @@ export function getAutomationSchedule(rule, onchainTiming = null, funding = null
     return {
       lastLabel: last ? formatTs(last) || 'Never' : 'Never',
       nextLabel: starved
-        ? 'Out of funds'
+        ? 'Needs funds'
         : nextFromLast(last, interval, enabled),
     }
   }
 
   return {
     lastLabel: '—',
-    nextLabel: !enabled ? 'Paused' : starved ? 'Out of funds' : '—',
+    nextLabel: !enabled ? 'Paused' : starved ? 'Needs funds' : '—',
   }
 }

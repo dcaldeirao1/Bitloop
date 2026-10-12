@@ -8,6 +8,16 @@ import {
   parseUnits,
 } from 'ethers'
 import { isVaultKindActive } from './automations'
+import {
+  chainLabel,
+  extractDepositAddress,
+  extractRequestId,
+  getRelayQuote,
+  isNativeCurrency,
+  relayChain,
+  resolveRelayToken,
+  summarizeRelayQuote,
+} from './relay'
 
 export const SEPOLIA_USDC =
   import.meta.env.VITE_USDC_ADDRESS ||
@@ -264,6 +274,132 @@ export async function setupUsdcRecurringAutomation({
     interval,
     intervalValue: Number(intervalValue),
     intervalUnit,
+  }
+}
+
+/** Quote Relay deposit address, then configure ERC-20 recurring → deposit address. */
+export async function setupRelayBridgeAutomation({
+  amountHuman,
+  originChainId,
+  destinationChainId,
+  recipient,
+  intervalValue,
+  intervalUnit,
+  originToken,
+  originCustomAddress,
+  originDecimals,
+  destinationToken,
+  destinationCustomAddress,
+  destinationDecimals,
+  tokenAddress,
+}) {
+  const origin = Number(originChainId)
+  const destination = Number(destinationChainId)
+  if (!(origin > 0) || !(destination > 0) || origin === destination) {
+    throw new Error('Pick different origin and destination chains.')
+  }
+  if (!relayChain(origin) || !relayChain(destination)) {
+    throw new Error('Unsupported Relay chain selection.')
+  }
+
+  const originResolved = resolveRelayToken(origin, {
+    tokenId: originToken || (tokenAddress ? 'custom' : 'USDC'),
+    customAddress: originCustomAddress || tokenAddress,
+    decimals: originDecimals,
+  })
+  const destinationResolved = resolveRelayToken(destination, {
+    tokenId: destinationToken || 'USDC',
+    customAddress: destinationCustomAddress,
+    decimals: destinationDecimals,
+  })
+
+  if (originResolved.native || isNativeCurrency(originResolved.address)) {
+    throw new Error(
+      'Vault automations can only send ERC-20 origin tokens. Pick WETH or another ERC-20 (destination may still be ETH).',
+    )
+  }
+
+  const signer = await getSigner()
+  const vault = await ensureVault()
+  const token = getAddress(originResolved.address)
+  const erc20 = new Contract(token, ERC20_ABI, signer)
+  let decimals = Number(originResolved.decimals)
+  try {
+    decimals = Number(await erc20.decimals())
+  } catch {
+    /* use catalog / provided decimals */
+  }
+  const amount = parseUnits(String(amountHuman), decimals)
+  const originCurrency = originResolved.address
+  const destinationCurrency = destinationResolved.address
+  const toRecipient = getAddress(recipient)
+
+  const quote = await getRelayQuote({
+    user: vault,
+    recipient: toRecipient,
+    originChainId: origin,
+    destinationChainId: destination,
+    originCurrency,
+    destinationCurrency,
+    amount: amount.toString(),
+    tradeType: 'EXACT_INPUT',
+    useDepositAddress: true,
+    refundTo: vault,
+  })
+
+  const depositAddress = extractDepositAddress(quote)
+  if (!depositAddress || !isAddressLike(depositAddress)) {
+    throw new Error(
+      'Relay did not return a deposit address. Check chain support / API key, or try again.',
+    )
+  }
+
+  const account = new Contract(vault, ACCOUNT_ABI, signer)
+  const interval = intervalToSeconds(intervalValue, intervalUnit)
+  const tx = await account.setRecurring(
+    token,
+    getAddress(depositAddress),
+    amount,
+    interval,
+    true,
+  )
+  await tx.wait()
+
+  return {
+    vaultAddress: vault,
+    token,
+    toAddress: getAddress(depositAddress),
+    depositAddress: getAddress(depositAddress),
+    recipient: toRecipient,
+    amount: amount.toString(),
+    amountHuman: String(amountHuman),
+    decimals,
+    interval,
+    intervalValue: Number(intervalValue),
+    intervalUnit,
+    originChainId: origin,
+    destinationChainId: destination,
+    originCurrency,
+    destinationCurrency,
+    originToken: originResolved.id,
+    destinationToken: destinationResolved.id,
+    originSymbol: originResolved.symbol,
+    destinationSymbol: destinationResolved.symbol,
+    originDecimals: decimals,
+    destinationDecimals: destinationResolved.decimals,
+    originChainLabel: chainLabel(origin),
+    destinationChainLabel: chainLabel(destination),
+    requestId: extractRequestId(quote),
+    relaySummary: summarizeRelayQuote(quote),
+  }
+}
+
+function isAddressLike(value) {
+  try {
+    getAddress(value)
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -542,6 +678,83 @@ export async function setDcaEnabled(
     enabled,
   )
   await tx.wait()
+}
+
+/**
+ * Sync soft-pause with on-chain enabled flag for a saved automation row.
+ * Returns false if the rule is off-chain (screener) or missing vault/config.
+ */
+export async function setAutomationOnchainEnabled(rule, enabled) {
+  const vault = rule?.vaultAddress
+  if (!vault || rule?.onchain === false) return false
+
+  const action = rule.action || {}
+  const trigger = rule.trigger || {}
+  const type = action.type
+
+  if (type === 'trading_strategy' || trigger.type === 'screener') return false
+
+  const isDca =
+    type === 'dca_swap' ||
+    type === 'swap_usdc_eth' ||
+    type === 'buy_eth' ||
+    type === 'buy_token' ||
+    type === 'sell_eth_usdc' ||
+    type === 'sell_token_eth'
+
+  const isRecurring =
+    type === 'send_amount' ||
+    type === 'send_token' ||
+    type === 'bridge_relay' ||
+    trigger.type === 'every_interval' ||
+    trigger.type === 'time_window' ||
+    trigger.type === 'usdc_above' ||
+    trigger.type === 'eth_price_below' ||
+    trigger.type === 'eth_price_above'
+
+  const isSplit =
+    type === 'split' ||
+    type === 'send_percent' ||
+    trigger.type === 'receive_usdc' ||
+    trigger.type === 'receive_eth'
+
+  if (isDca) {
+    await setDcaEnabled(vault, enabled, {
+      token: action.tokenIn || action.token || SEPOLIA_USDC,
+      tokenOut: action.tokenOut || null,
+      router: action.router,
+      amountHuman: action.amountHuman ?? action.amount,
+      interval: action.interval || trigger.interval,
+      decimals: action.decimals ?? 6,
+      minOut: action.minOut || '0',
+      amountAsset: action.amountAsset,
+    })
+    return true
+  }
+
+  if (isRecurring) {
+    const token = action.token || action.originCurrency || SEPOLIA_USDC
+    await setRecurringEnabled(vault, enabled, {
+      token,
+      to: action.to || action.depositAddress || action.recipient,
+      amountHuman: action.amountHuman ?? action.amount,
+      interval: action.interval || trigger.interval,
+      decimals: action.decimals ?? action.originDecimals ?? 6,
+    })
+    return true
+  }
+
+  if (isSplit) {
+    const eth = trigger.type === 'receive_eth' || action.asset === 'ETH'
+    await setSplitEnabled(vault, enabled, {
+      token: eth ? ZERO : action.token || trigger.token || SEPOLIA_USDC,
+      savings: action.to,
+      percent: action.percent,
+    })
+    return true
+  }
+
+  return false
 }
 
 export async function getTokenBalance(holderAddress, token = SEPOLIA_USDC) {

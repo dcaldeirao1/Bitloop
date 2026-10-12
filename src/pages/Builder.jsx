@@ -2,15 +2,21 @@ import { useEffect, useMemo, useState } from 'react'
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { BlockPalette } from '../components/BlockPalette'
 import { DashShell } from '../components/DashShell'
+import { NetworkBanner } from '../components/NetworkBanner'
 import { RuleCanvas } from '../components/RuleCanvas'
 import { useWallet } from '../context/WalletContext'
 import {
+  automationKind,
+  describeAutomation,
   isValidAddress,
+  listAutomations,
   saveAutomation,
   setCachedVault,
+  updateAutomation,
 } from '../lib/automations'
 import {
   setupEthSplitAutomation,
+  setupRelayBridgeAutomation,
   setupSellEthForUsdcAutomation,
   setupSellTokenForEthAutomation,
   setupTokenRecurringAutomation,
@@ -18,6 +24,37 @@ import {
   setupUsdcRecurringAutomation,
   setupUsdcSplitAutomation,
 } from '../lib/vault'
+import { findChainToken, isNativeCurrency } from '../lib/relay'
+
+const TEMPLATES = [
+  {
+    id: 'income_split',
+    title: 'Income split',
+    blurb: 'When USDC arrives, send 20% to savings',
+    apply: () => ({
+      trigger: { type: 'receive_usdc' },
+      action: { type: 'send_percent', percent: 20, to: '' },
+    }),
+  },
+  {
+    id: 'scheduled_transfer',
+    title: 'Scheduled transfer',
+    blurb: 'Every day, send 10 USDC to an address',
+    apply: () => ({
+      trigger: { type: 'every_interval', every: 1, unit: 'days' },
+      action: { type: 'send_amount', amount: '10', to: '' },
+    }),
+  },
+  {
+    id: 'dca_eth',
+    title: 'DCA into ETH',
+    blurb: 'Every hour, buy ETH with 10 USDC',
+    apply: () => ({
+      trigger: { type: 'every_interval', every: 1, unit: 'hours' },
+      action: { type: 'buy_eth', amount: '10' },
+    }),
+  },
+]
 
 const SCHEDULE_TRIGGERS = new Set([
   'every_interval',
@@ -38,7 +75,7 @@ const DCA_ACTIONS = new Set([
   'swap_usdc_eth',
 ])
 
-const SEND_ACTIONS = new Set(['send_amount', 'send_token'])
+const SEND_ACTIONS = new Set(['send_amount', 'send_token', 'bridge_relay'])
 
 function intervalOk(trigger) {
   return (
@@ -58,15 +95,15 @@ function scheduleTriggerFieldsOk(trigger) {
     return Number.isFinite(px) && px > 0
   }
   if (trigger.type === 'time_window') {
-    const s = Number(trigger.startHour)
-    const e = Number(trigger.endHour)
+    const hour = Number(trigger.hour ?? trigger.startHour)
+    const minute = Number(trigger.minute ?? 0)
     return (
-      Number.isInteger(s) &&
-      Number.isInteger(e) &&
-      s >= 0 &&
-      s <= 23 &&
-      e >= 0 &&
-      e <= 23
+      Number.isInteger(hour) &&
+      Number.isInteger(minute) &&
+      hour >= 0 &&
+      hour <= 23 &&
+      minute >= 0 &&
+      minute <= 59
     )
   }
   return true
@@ -88,11 +125,15 @@ function buildTriggerPayload(trigger, result) {
   }
 
   if (trigger.type === 'time_window') {
+    const hour = Number(trigger.hour ?? trigger.startHour ?? 0)
+    const minute = Number(trigger.minute ?? 0)
+    const hh = String(hour).padStart(2, '0')
+    const mm = String(minute).padStart(2, '0')
     return {
       ...base,
-      startHour: Number(trigger.startHour),
-      endHour: Number(trigger.endHour),
-      label: `UTC ${trigger.startHour}–${trigger.endHour} · every ${result.intervalValue} ${result.intervalUnit}`,
+      hour,
+      minute,
+      label: `At ${hh}:${mm} UTC · every ${result.intervalValue} ${result.intervalUnit}`,
     }
   }
 
@@ -132,6 +173,8 @@ export function Builder() {
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState(null)
   const [error, setError] = useState(null)
+  const [showPreview, setShowPreview] = useState(false)
+  const [existingRules, setExistingRules] = useState([])
 
   useEffect(() => {
     const token = params.get('token')
@@ -144,6 +187,37 @@ export function Builder() {
       })
     }
   }, [params])
+
+  useEffect(() => {
+    if (!address) return
+    listAutomations(address)
+      .then(setExistingRules)
+      .catch(() => setExistingRules([]))
+  }, [address])
+
+  const draftKind = useMemo(() => {
+    if (!trigger || !action) return null
+    return automationKind(action, trigger)
+  }, [trigger, action])
+
+  const overwriteRules = useMemo(() => {
+    if (!draftKind) return []
+    return existingRules.filter(
+      (r) =>
+        r.onchain !== false &&
+        automationKind(r.action, r.trigger) === draftKind,
+    )
+  }, [existingRules, draftKind])
+
+  const previewRule = useMemo(() => {
+    if (!trigger || !action) return null
+    return {
+      enabled: true,
+      trigger,
+      action,
+      onchain: true,
+    }
+  }, [trigger, action])
 
   const canSave = useMemo(() => {
     if (!trigger || !action) return false
@@ -159,9 +233,32 @@ export function Builder() {
     if (SCHEDULE_TRIGGERS.has(trigger.type) && SEND_ACTIONS.has(action.type)) {
       if (!scheduleTriggerFieldsOk(trigger)) return false
       const amount = Number(action.amount)
-      if (!Number.isFinite(amount) || amount <= 0 || !isValidAddress(action.to)) {
-        return false
+      if (!Number.isFinite(amount) || amount <= 0) return false
+      if (action.type === 'bridge_relay') {
+        const originToken = action.originToken || 'USDC'
+        const destToken = action.destinationToken || 'USDC'
+        if (originToken === 'custom' && !isValidAddress(action.originCustomAddress)) {
+          return false
+        }
+        if (destToken === 'custom' && !isValidAddress(action.destinationCustomAddress)) {
+          return false
+        }
+        const originAddr =
+          originToken === 'custom'
+            ? action.originCustomAddress
+            : findChainToken(action.originChainId, originToken)?.address ||
+              action.originCurrency
+        if (isNativeCurrency(originAddr) || originToken === 'ETH' || originToken === 'MATIC') {
+          return false
+        }
+        return (
+          isValidAddress(action.recipient) &&
+          Number(action.originChainId) > 0 &&
+          Number(action.destinationChainId) > 0 &&
+          Number(action.originChainId) !== Number(action.destinationChainId)
+        )
       }
+      if (!isValidAddress(action.to)) return false
       if (action.type === 'send_token' && !isValidAddress(action.token)) return false
       return true
     }
@@ -195,10 +292,10 @@ export function Builder() {
     } else if (type === 'time_window') {
       setTrigger({
         type: 'time_window',
-        startHour: 9,
-        endHour: 17,
+        hour: 9,
+        minute: 0,
         every: 1,
-        unit: 'hours',
+        unit: 'days',
       })
     } else if (type === 'usdc_above') {
       setTrigger({ type: 'usdc_above', amount: '100', every: 1, unit: 'hours' })
@@ -266,14 +363,42 @@ export function Builder() {
       if (trigger && !SCHEDULE_TRIGGERS.has(trigger.type)) setTrigger(null)
       return
     }
+    if (type === 'bridge_relay') {
+      const origin = findChainToken(42161, 'WETH')
+      const dest = findChainToken(8453, 'USDC')
+      setAction({
+        type: 'bridge_relay',
+        amount: '0.01',
+        originChainId: 42161,
+        destinationChainId: 8453,
+        originToken: 'WETH',
+        originCurrency: origin?.address || '',
+        originSymbol: 'WETH',
+        originDecimals: 18,
+        destinationToken: 'USDC',
+        destinationCurrency: dest?.address || '',
+        destinationSymbol: 'USDC',
+        destinationDecimals: 6,
+        recipient: address || '',
+      })
+      if (trigger && !SCHEDULE_TRIGGERS.has(trigger.type)) setTrigger(null)
+      return
+    }
     setAction({ type: 'send_percent', percent: 20, to: '' })
     if (trigger && !PERCENT_TRIGGERS.has(trigger.type)) setTrigger(null)
+  }
+
+  const requestSave = () => {
+    if (!trigger || !action || !canSave) return
+    setError(null)
+    setShowPreview(true)
   }
 
   const handleSave = async () => {
     if (!trigger || !action || !canSave) return
     setSaving(true)
     setError(null)
+    setShowPreview(false)
     setStatus('Confirm MetaMask: deploy/configure your vault…')
     try {
       if (action.type === 'sell_eth_usdc') {
@@ -403,6 +528,50 @@ export function Builder() {
           },
           onchain: true,
         })
+      } else if (action.type === 'bridge_relay') {
+        setStatus('Fetching Relay quote + configuring vault…')
+        const result = await setupRelayBridgeAutomation({
+          amountHuman: action.amount,
+          originChainId: action.originChainId,
+          destinationChainId: action.destinationChainId,
+          recipient: action.recipient,
+          intervalValue: trigger.every,
+          intervalUnit: trigger.unit,
+          originToken: action.originToken,
+          originCustomAddress: action.originCustomAddress,
+          originDecimals: action.originDecimals,
+          destinationToken: action.destinationToken,
+          destinationCustomAddress: action.destinationCustomAddress,
+          destinationDecimals: action.destinationDecimals,
+        })
+        setCachedVault(address, result.vaultAddress)
+        await saveAutomation(address, {
+          enabled: true,
+          vaultAddress: result.vaultAddress,
+          trigger: buildTriggerPayload(trigger, result),
+          action: {
+            type: 'bridge_relay',
+            amount: result.amount,
+            amountHuman: result.amountHuman,
+            decimals: result.decimals,
+            to: result.toAddress,
+            recipient: result.recipient,
+            originChainId: result.originChainId,
+            destinationChainId: result.destinationChainId,
+            originToken: result.originToken,
+            destinationToken: result.destinationToken,
+            originCurrency: result.originCurrency,
+            destinationCurrency: result.destinationCurrency,
+            originSymbol: result.originSymbol,
+            destinationSymbol: result.destinationSymbol,
+            originDecimals: result.originDecimals,
+            destinationDecimals: result.destinationDecimals,
+            depositAddress: result.depositAddress,
+            requestId: result.requestId,
+            relaySummary: result.relaySummary,
+          },
+          onchain: true,
+        })
       } else if (trigger.type === 'receive_eth') {
         const result = await setupEthSplitAutomation({
           savingsAddress: action.to,
@@ -441,31 +610,56 @@ export function Builder() {
         })
       }
 
+      // Soft-pause superseded same-kind rows (vault has one on-chain slot per kind)
+      if (overwriteRules.length) {
+        setStatus('Updating superseded automations…')
+        await Promise.all(
+          overwriteRules.map((r) =>
+            updateAutomation(address, r.id, { enabled: false }).catch(() => null),
+          ),
+        )
+      }
+
       navigate('/app?section=automations')
     } catch (err) {
-      setError(err?.shortMessage || err?.message || 'Could not set up automation')
+      const msg = String(err?.shortMessage || err?.message || '')
+      if (/user rejected|denied|ACTION_REJECTED/i.test(msg)) {
+        setError('Transaction rejected in MetaMask')
+      } else if (/insufficient funds/i.test(msg)) {
+        setError('Insufficient funds for gas — fund your wallet with Sepolia ETH')
+      } else {
+        setError(msg || 'Could not set up automation')
+      }
       setStatus(null)
     } finally {
       setSaving(false)
     }
   }
 
+  const applyTemplate = (template) => {
+    const next = template.apply()
+    setTrigger(next.trigger)
+    setAction(next.action)
+    setError(null)
+  }
+
   return (
     <DashShell>
+      <NetworkBanner />
       <div className="dash-header">
         <div>
           <h1 className="dash-title">New automation</h1>
           <p className="dash-subtitle">
-            Compose the rule on top, then pick blocks from the catalog.
+            Start from a template or compose blocks, then preview before deploying on-chain.
           </p>
         </div>
         <button
           type="button"
           disabled={!canSave || saving}
-          onClick={() => void handleSave()}
+          onClick={requestSave}
           className="btn-primary"
         >
-          {saving ? 'Confirm in MetaMask…' : 'Save & deploy'}
+          {saving ? 'Confirm in MetaMask…' : 'Preview & deploy'}
         </button>
       </div>
 
@@ -475,6 +669,33 @@ export function Builder() {
         </p>
       )}
       {error && <p className="alert-error mb-4">{error}</p>}
+
+      <div className="builder-templates mb-4">
+        <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
+          Templates
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {TEMPLATES.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className="builder-template-chip"
+              onClick={() => applyTemplate(t)}
+            >
+              <span className="builder-template-title">{t.title}</span>
+              <span className="builder-template-blurb">{t.blurb}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {overwriteRules.length > 0 && draftKind ? (
+        <p className="alert-warn mb-4" role="status">
+          This vault has one on-chain {draftKind} slot. Deploying will replace the
+          current {draftKind} rule and pause {overwriteRules.length} existing
+          automation{overwriteRules.length === 1 ? '' : 's'} in your library.
+        </p>
+      ) : null}
 
       <div className="builder-workspace">
         <RuleCanvas
@@ -493,6 +714,62 @@ export function Builder() {
           onAddAction={addAction}
         />
       </div>
+
+      {showPreview && previewRule ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => !saving && setShowPreview(false)}
+          role="presentation"
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-line bg-surface p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Preview automation"
+          >
+            <h3 className="text-[16px] font-semibold text-ink">Preview before deploy</h3>
+            <p className="mt-2 text-[13px] leading-relaxed text-muted">
+              {describeAutomation(previewRule)}
+            </p>
+            <ul className="mt-4 space-y-2 text-[12px] text-muted">
+              <li>
+                · Real on-chain setup via MetaMask (not a simulation)
+              </li>
+              <li>
+                · Spending per run is capped at the amount you configured
+                {action?.amount || action?.percent
+                  ? ` (${action.amount ? `${action.amount} tokens` : `${action.percent}%`})`
+                  : ''}
+              </li>
+              <li>· Keeper executes only while the automation stays Active and funded</li>
+              {overwriteRules.length > 0 ? (
+                <li className="text-mango">
+                  · Replaces the existing on-chain {draftKind} configuration
+                </li>
+              ) : null}
+            </ul>
+            <div className="mt-5 flex gap-2">
+              <button
+                type="button"
+                className="btn-outline flex-1"
+                disabled={saving}
+                onClick={() => setShowPreview(false)}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                className="btn-primary flex-1"
+                disabled={saving}
+                onClick={() => void handleSave()}
+              >
+                {saving ? 'Confirm in MetaMask…' : 'Confirm & deploy'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </DashShell>
   )
 }

@@ -6,7 +6,7 @@ export const APP_NAV = [
   { id: 'overview', label: 'Overview' },
   { id: 'automations', label: 'Automations', countKey: 'automations' },
   { id: 'trenches', label: 'Trenches', countKey: 'trenches' },
-  { id: 'perps', label: 'Perps', soon: true },
+  { id: 'perps', label: 'Perps' },
   { id: 'settings', label: 'Settings', footer: true },
 ]
 

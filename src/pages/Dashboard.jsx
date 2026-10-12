@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { ActivityList } from '../components/ActivityList'
 import { AutomationCard } from '../components/AutomationFlow'
 import { DashShell, normalizeSection } from '../components/DashShell'
+import { NetworkBanner } from '../components/NetworkBanner'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { TradingDiscovery } from '../components/TradingDiscovery'
 import {
@@ -10,10 +11,12 @@ import {
   TradingSandbox,
 } from '../components/TradingSandbox'
 import { TradingStrategyForm } from '../components/TradingStrategyForm'
+import { PerpsDesk } from '../components/PerpsDesk'
 import { VaultCommandCenter } from '../components/VaultCommandCenter'
 import { WalletButton } from '../components/WalletButton'
 import { useWallet } from '../context/WalletContext'
 import {
+  automationKind,
   deleteAutomation,
   getCachedVault,
   listAutomations,
@@ -30,6 +33,7 @@ import {
   getVaultAddress,
   getVaultBalances,
   getVaultScheduleState,
+  setAutomationOnchainEnabled,
   SEPOLIA_USDC,
 } from '../lib/vault'
 
@@ -76,6 +80,7 @@ export function Dashboard() {
   const [trenchesTab, setTrenchesTab] = useState('discover')
   const [showStrategyForm, setShowStrategyForm] = useState(false)
   const [pendingStrategy, setPendingStrategy] = useState(null)
+  const [pendingRuleId, setPendingRuleId] = useState(null)
   const [showStrategyLaunch, setShowStrategyLaunch] = useState(false)
   const [sandboxFocusId, setSandboxFocusId] = useState(null)
   const [savingStrategy, setSavingStrategy] = useState(false)
@@ -197,15 +202,15 @@ export function Dashboard() {
       enabledRules.filter((r) => !getAutomationFunding(r, balances).starved),
     [enabledRules, balances],
   )
+  const attentionRules = useMemo(
+    () =>
+      enabledRules.filter((r) => getAutomationFunding(r, balances).starved),
+    [enabledRules, balances],
+  )
   const activeCount = activeRules.length
   const overviewRules = useMemo(
-    () =>
-      [...enabledRules].sort((a, b) => {
-        const aStarved = getAutomationFunding(a, balances).starved ? 1 : 0
-        const bStarved = getAutomationFunding(b, balances).starved ? 1 : 0
-        return aStarved - bStarved
-      }),
-    [enabledRules, balances],
+    () => [...activeRules, ...attentionRules],
+    [activeRules, attentionRules],
   )
 
   const libraryRules = useMemo(
@@ -226,11 +231,11 @@ export function Dashboard() {
     },
     trenches: {
       title: 'Trenches',
-      blurb: 'Discover tokens, run strategies, or paper-trade in the sandbox.',
+      blurb: 'Discover tokens and paper-track strategies (mock bankroll, live prices).',
     },
     perps: {
       title: 'Perps',
-      blurb: 'Hyperliquid perpetuals automations — coming soon.',
+      blurb: 'Hyperliquid testnet — agent connect and one-shot longs with TP/SL.',
     },
     settings: {
       title: 'Settings',
@@ -327,20 +332,72 @@ export function Dashboard() {
     setActionError(null)
     try {
       const enabled = !rule.enabled
+      // On-chain pause/resume so keeper cannot run while soft-paused
+      if (rule.onchain !== false && rule.vaultAddress && automationKind(rule.action, rule.trigger)) {
+        try {
+          await setAutomationOnchainEnabled(rule, enabled)
+        } catch (chainErr) {
+          throw new Error(
+            humanActionError(
+              chainErr,
+              enabled
+                ? 'Could not resume on-chain automation'
+                : 'Could not pause on-chain automation',
+            ),
+          )
+        }
+      }
       const updated = await updateAutomation(address, rule.id, { enabled })
       setRules((prev) => prev.map((r) => (r.id === rule.id ? updated : r)))
+      if (rule.vaultAddress) void refreshSchedule(rule.vaultAddress)
     } catch (err) {
-      setActionError(err?.shortMessage || err?.message || 'Update failed')
+      setActionError(humanActionError(err, 'Update failed'))
     } finally {
       setBusyId(null)
     }
   }
 
-  const createStrategyDraft = (config) => {
-    setPendingStrategy(config)
-    setShowStrategyForm(false)
-    setShowStrategyLaunch(true)
+  const createStrategyDraft = async (config) => {
+    setSavingStrategy(true)
     setActionError(null)
+    try {
+      const vaultAddr = vault || (await getVaultAddress(address))
+      const saved = await saveAutomation(address, {
+        enabled: false,
+        vaultAddress: vaultAddr,
+        onchain: false,
+        trigger: {
+          type: 'screener',
+          chainId: config.chainId,
+          pairSource: config.pairSource === 'new' ? 'new' : 'volume',
+          minVolume24h: config.minVolume24h,
+          minHolders: config.minHolders,
+          minLiquidityUsd: config.minLiquidityUsd,
+          label: `GeckoTerminal ${config.chainId} · ${
+            config.pairSource === 'new' ? 'new pairs' : 'top volume'
+          }`,
+        },
+        action: {
+          type: 'trading_strategy',
+          buyEth: config.buyEth,
+          takeProfits: config.takeProfits,
+          stopLossPercent: config.stopLossPercent,
+          positions: [],
+          sandboxSession: null,
+          lastScanAt: null,
+          lastMatch: null,
+        },
+      })
+      setRules((prev) => [saved, ...prev])
+      setPendingStrategy(config)
+      setPendingRuleId(saved.id)
+      setShowStrategyForm(false)
+      setShowStrategyLaunch(true)
+    } catch (err) {
+      setActionError(err?.message || 'Could not save strategy')
+    } finally {
+      setSavingStrategy(false)
+    }
   }
 
   const saveStrategy = async (config, { enabled = true } = {}) => {
@@ -369,12 +426,14 @@ export function Dashboard() {
           takeProfits: config.takeProfits,
           stopLossPercent: config.stopLossPercent,
           positions: [],
+          sandboxSession: null,
           lastScanAt: null,
           lastMatch: null,
         },
       })
       setRules((prev) => [saved, ...prev])
       setPendingStrategy(null)
+      setPendingRuleId(null)
       setShowStrategyLaunch(false)
       setShowStrategyForm(false)
       setTrenchesTab(enabled ? 'strategies' : 'sandbox')
@@ -388,8 +447,57 @@ export function Dashboard() {
   }
 
   const deployPendingStrategy = async () => {
+    if (pendingRuleId) {
+      setSavingStrategy(true)
+      setActionError(null)
+      try {
+        const updated = await updateAutomation(address, pendingRuleId, {
+          enabled: true,
+        })
+        setRules((prev) => prev.map((r) => (r.id === pendingRuleId ? updated : r)))
+        setPendingStrategy(null)
+        setPendingRuleId(null)
+        setShowStrategyLaunch(false)
+        setTrenchesTab('strategies')
+      } catch (err) {
+        setActionError(err?.message || 'Could not deploy strategy')
+      } finally {
+        setSavingStrategy(false)
+      }
+      return
+    }
     if (!pendingStrategy) return
     await saveStrategy(pendingStrategy, { enabled: true })
+  }
+
+  const persistSandboxToRule = async (ruleId, session) => {
+    if (!address || !ruleId) return
+    const rule = rules.find((r) => r.id === ruleId)
+    if (!rule || !isStrategyRule(rule)) return
+    try {
+      const updated = await updateAutomation(address, ruleId, {
+        action: {
+          ...rule.action,
+          sandboxSession: session
+            ? {
+                status: session.status,
+                cashEth: session.cashEth,
+                startingCashEth: session.startingCashEth,
+                positions: session.positions,
+                trades: (session.trades || []).slice(0, 40),
+                equityCurve: (session.equityCurve || []).slice(-80),
+                startedAt: session.startedAt,
+                lastScanAt: session.lastScanAt,
+                lastMarkAt: session.lastMarkAt,
+                updatedAt: Date.now(),
+              }
+            : null,
+        },
+      })
+      setRules((prev) => prev.map((r) => (r.id === ruleId ? updated : r)))
+    } catch {
+      /* localStorage still holds the session */
+    }
   }
 
   const deploySandboxStrategy = async (config, rule) => {
@@ -437,12 +545,43 @@ export function Dashboard() {
   }
 
   const onDelete = async (rule) => {
+    setBusyId(rule.id)
     setActionError(null)
     try {
+      const kind = automationKind(rule.action, rule.trigger)
+      const othersSameKind = rules.filter(
+        (r) =>
+          r.id !== rule.id &&
+          r.vaultAddress &&
+          rule.vaultAddress &&
+          r.vaultAddress.toLowerCase() === rule.vaultAddress.toLowerCase() &&
+          automationKind(r.action, r.trigger) === kind,
+      )
+      // Disable on-chain when deleting the last row for that vault slot
+      if (
+        kind &&
+        rule.onchain !== false &&
+        rule.vaultAddress &&
+        othersSameKind.length === 0
+      ) {
+        try {
+          await setAutomationOnchainEnabled(rule, false)
+        } catch (chainErr) {
+          throw new Error(
+            humanActionError(
+              chainErr,
+              'Could not disable on-chain automation before delete',
+            ),
+          )
+        }
+      }
       await deleteAutomation(address, rule.id)
       setRules((prev) => prev.filter((r) => r.id !== rule.id))
+      if (expandedId === rule.id) setExpandedId(null)
     } catch (err) {
-      setActionError(err?.message || 'Delete failed')
+      setActionError(humanActionError(err, 'Delete failed'))
+    } finally {
+      setBusyId(null)
     }
   }
 
@@ -594,6 +733,8 @@ export function Dashboard() {
       onSelectSection={selectSection}
       autoCounts={counts}
     >
+      <NetworkBanner />
+
       {section === 'settings' ? (
         <SettingsPanel
           address={address}
@@ -604,10 +745,7 @@ export function Dashboard() {
           onCopy={() => void copyVault()}
         />
       ) : section === 'perps' ? (
-        <SoonPanel
-          title="Perps on Hyperliquid"
-          body="Automate perpetual entries, exits, and risk rules on Hyperliquid. Spot trenches and vault automations are live today."
-        />
+        <PerpsDesk address={address} />
       ) : (
         <>
           {section !== 'overview' && (
@@ -630,6 +768,7 @@ export function Dashboard() {
                     setTrenchesTab('strategies')
                     setShowStrategyLaunch(false)
                     setPendingStrategy(null)
+                    setPendingRuleId(null)
                     setShowStrategyForm(true)
                   }}
                 >
@@ -668,9 +807,14 @@ export function Dashboard() {
 
               <div className="os-section">
                 <div className="os-section-header">
-                  <h3 className="os-section-title">Active automations</h3>
+                  <h3 className="os-section-title">Connected automations</h3>
                   <span className="os-section-meta">
-                    {activeCount} running · {rules.length} total
+                    {activeCount} running
+                    {attentionRules.length > 0
+                      ? ` · ${attentionRules.length} need attention`
+                      : ''}
+                    {' · '}
+                    {rules.length} total
                   </span>
                 </div>
 
@@ -798,7 +942,7 @@ export function Dashboard() {
                   <TradingStrategyForm
                     saving={savingStrategy}
                     onCancel={() => setShowStrategyForm(false)}
-                    onSave={(cfg) => createStrategyDraft(cfg)}
+                    onSave={(cfg) => void createStrategyDraft(cfg)}
                   />
                 </div>
               )}
@@ -814,6 +958,7 @@ export function Dashboard() {
                     }}
                     onTest={() => {
                       setShowStrategyLaunch(false)
+                      if (pendingRuleId) setSandboxFocusId(pendingRuleId)
                       setTrenchesTab('sandbox')
                     }}
                     onDeploy={() => void deployPendingStrategy()}
@@ -831,10 +976,20 @@ export function Dashboard() {
                   <TradingSandbox
                     strategyRules={strategyRules}
                     pendingStrategy={pendingStrategy}
-                    initialStrategyId={sandboxFocusId}
+                    pendingRuleId={pendingRuleId}
+                    initialStrategyId={sandboxFocusId || pendingRuleId}
+                    ownerKey={address || 'anon'}
                     deploying={savingStrategy || Boolean(busyId)}
-                    onClearPending={() => setPendingStrategy(null)}
+                    onClearPending={() => {
+                      const id = pendingRuleId
+                      setPendingStrategy(null)
+                      setPendingRuleId(null)
+                      if (id) void onDelete({ id })
+                    }}
                     onDeploy={(cfg, rule) => void deploySandboxStrategy(cfg, rule)}
+                    onPersistSandbox={(ruleId, session) =>
+                      void persistSandboxToRule(ruleId, session)
+                    }
                   />
                 )}
 
@@ -870,13 +1025,18 @@ export function Dashboard() {
   )
 }
 
-function SoonPanel({ title, body }) {
-  return (
-    <div className="dash-empty animate-in">
-      <h1 className="dash-title">{title}</h1>
-      <p className="mx-auto mt-2 max-w-md text-[14px] text-muted">{body}</p>
-    </div>
-  )
+function humanActionError(err, fallback) {
+  const msg = String(err?.shortMessage || err?.message || fallback)
+  if (/user rejected|denied|ACTION_REJECTED/i.test(msg)) {
+    return 'Transaction rejected in MetaMask'
+  }
+  if (/insufficient funds|exceeds balance/i.test(msg)) {
+    return 'Insufficient funds for gas or token amount'
+  }
+  if (/network|timeout|429|eth_/i.test(msg)) {
+    return 'Network error — confirm Sepolia and try again'
+  }
+  return msg || fallback
 }
 
 function SettingsPanel({ address, vault, balances, loadingBalances, copied, onCopy }) {
