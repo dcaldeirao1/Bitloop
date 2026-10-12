@@ -4,6 +4,8 @@ import { BlockPalette } from '../components/BlockPalette'
 import { DashShell } from '../components/DashShell'
 import { NetworkBanner } from '../components/NetworkBanner'
 import { RuleCanvas } from '../components/RuleCanvas'
+import { EnvBadge, RuleStepsHeader } from '../components/RuleStepsHeader'
+import { RULE_CATEGORY, getCategoryMeta } from '../lib/ruleCategories'
 import { useWallet } from '../context/WalletContext'
 import {
   automationKind,
@@ -620,7 +622,7 @@ export function Builder() {
         )
       }
 
-      navigate('/app?section=automations')
+      navigate('/app?section=save-pay')
     } catch (err) {
       const msg = String(err?.shortMessage || err?.message || '')
       if (/user rejected|denied|ACTION_REJECTED/i.test(msg)) {
@@ -643,14 +645,25 @@ export function Builder() {
     setError(null)
   }
 
+  const savePayMeta = getCategoryMeta(RULE_CATEGORY.SAVE_PAY)
+  const builderStep = !trigger ? 1 : !action ? 2 : showPreview ? 4 : 3
+
   return (
-    <DashShell>
+    <DashShell section="save-pay">
       <NetworkBanner />
-      <div className="dash-header">
-        <div>
-          <h1 className="dash-title">New automation</h1>
-          <p className="dash-subtitle">
-            Start from a template or compose blocks, then preview before deploying on-chain.
+      <RuleStepsHeader
+        categoryId={RULE_CATEGORY.SAVE_PAY}
+        activeStep={builderStep}
+        title="New automation"
+        subtitle="Compose a trigger and action, test the preview, then deploy to your Sepolia vault."
+      />
+      <div className="dash-header" style={{ marginTop: '1rem' }}>
+        <div className="flex flex-wrap items-center gap-2">
+          <EnvBadge
+            env={{ label: savePayMeta.envLabel, tone: savePayMeta.envTone }}
+          />
+          <p className="text-[13px] text-muted">
+            Step 4: {savePayMeta.deployLabel}
           </p>
         </div>
         <button
@@ -659,7 +672,7 @@ export function Builder() {
           onClick={requestSave}
           className="btn-primary"
         >
-          {saving ? 'Confirm in MetaMask…' : 'Preview & deploy'}
+          {saving ? 'Confirm in MetaMask…' : savePayMeta.deployLabel}
         </button>
       </div>
 

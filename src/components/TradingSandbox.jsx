@@ -306,8 +306,8 @@ export function TradingSandbox({
       <div className="dash-empty animate-in">
         <p className="text-[15px] font-medium text-ink">No strategies to test</p>
         <p className="mx-auto mt-2 max-w-md text-[13px] text-muted">
-          Create a screener strategy first — you’ll get options to paper-trade it here
-          with mock funds against live prices, or deploy it live.
+          Create a spot strategy first — then test with paper funds against live
+          prices, and run a live paper scan when ready.
         </p>
       </div>
     )
@@ -319,10 +319,10 @@ export function TradingSandbox({
         <div className="sandbox-hero">
           <div>
             <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
-              New strategy ready
+              Test, then deploy
             </p>
             <p className="mt-1 text-[15px] font-semibold tracking-tight text-ink">
-              Paper-trade live, then enable live scan tracking
+              Test with paper funds, then run live scan (paper)
             </p>
             <p className="mt-1 text-[12px] text-muted">{describeStrategy(pending)}</p>
           </div>
@@ -338,7 +338,7 @@ export function TradingSandbox({
               disabled={deploying}
               onClick={handleDeploy}
             >
-              {deploying ? 'Enabling…' : 'Enable live scan (paper)'}
+              {deploying ? 'Enabling…' : 'Run live scan (paper)'}
             </button>
           </div>
         </div>
@@ -348,11 +348,11 @@ export function TradingSandbox({
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="min-w-0 flex-1">
             <h3 className="text-[15px] font-semibold tracking-tight text-ink">
-              Live sandbox
+              Test with paper funds
             </h3>
             <p className="mt-1 text-[12px] text-muted">
               Mock ETH only — paper positions at live DexScreener prices. Does not spend
-              vault funds.
+              vault funds. Environment: Paper.
             </p>
           </div>
           <div className="flex flex-wrap items-end gap-2">
@@ -424,7 +424,7 @@ export function TradingSandbox({
                 disabled={deploying}
                 onClick={handleDeploy}
               >
-                {deploying ? 'Deploying…' : 'Deploy'}
+                {deploying ? 'Enabling…' : 'Run live scan (paper)'}
               </button>
             ) : null}
           </div>
@@ -503,7 +503,7 @@ export function TradingSandbox({
                 disabled={deploying}
                 onClick={handleDeploy}
               >
-                {deploying ? 'Enabling…' : 'Enable live scan (paper)'}
+                {deploying ? 'Enabling…' : 'Run live scan (paper)'}
               </button>
             </div>
           ) : null}
@@ -797,13 +797,13 @@ export function StrategyLaunchPanel({
         Strategy created
       </p>
       <h2 className="mt-1 text-[18px] font-semibold tracking-tight text-ink">
-        Test in sandbox, or enable paper scan
+        Test, then deploy
       </h2>
       <p className="mt-2 text-[13px] text-muted">
         {describeStrategy(strategyFromConfig(strategy))}
       </p>
       <p className="mt-3 text-[13px] text-muted">
-        Sandbox and “live scan” both use mock ETH with live DexScreener prices.
+        Paper test and live scan both use mock ETH with live DexScreener prices.
         They do not spend vault funds or open real on-chain swaps.
       </p>
       <div className="mt-5 flex flex-wrap gap-2">
@@ -811,7 +811,7 @@ export function StrategyLaunchPanel({
           Back
         </button>
         <button type="button" className="btn-outline" onClick={onTest}>
-          Test in sandbox
+          Test with paper funds
         </button>
         <button
           type="button"
@@ -819,7 +819,7 @@ export function StrategyLaunchPanel({
           disabled={deploying}
           onClick={onDeploy}
         >
-          {deploying ? 'Enabling…' : 'Enable live scan (paper)'}
+          {deploying ? 'Enabling…' : 'Run live scan (paper)'}
         </button>
       </div>
     </div>

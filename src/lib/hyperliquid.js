@@ -1,11 +1,6 @@
 import { BrowserProvider, Wallet } from 'ethers'
 import { ExchangeClient, HttpTransport, InfoClient } from '@nktkas/hyperliquid'
 import { formatPrice, formatSize, SymbolConverter } from '@nktkas/hyperliquid/utils'
-import {
-  decryptSecret,
-  encryptSecret,
-  validatePassphrase,
-} from './agentVault'
 
 /** Phase 1+2 ships on Hyperliquid testnet only. */
 export const HL_IS_TESTNET = true
@@ -35,7 +30,7 @@ const AGENT_NAME = 'pm-desk'
 const ENTRY_SLIPPAGE = 0.005 // 0.5% aggressive IOC vs mid
 const TRIGGER_LIMIT_BUFFER = 0.01 // 1% limit cushion on market TP/SL
 
-/** In-memory decrypted keys for this tab session only (never written to disk). */
+/** In-memory agent keys for this tab (also persisted locally for hackathon UX). */
 const unlockedPrivateKeys = new Map()
 
 let transportSingleton = null
@@ -127,32 +122,100 @@ function readLegacyPlaintext(ownerAddress) {
 }
 
 /**
- * Public agent status (never includes the private key).
- * @returns {{ address, approvedAt, name, unlocked, needsMigration } | null}
+ * Load agent private key into memory from local storage (no passphrase).
+ * Encrypted v2 records cannot be recovered — user must forget + re-approve.
+ */
+function hydrateAgentKey(ownerAddress) {
+  const owner = normalizeOwner(ownerAddress)
+  if (!owner) return null
+  if (unlockedPrivateKeys.has(owner)) {
+    return unlockedPrivateKeys.get(owner)
+  }
+
+  const record = readRawRecord(owner)
+  if (record?.v === 3 && record.privateKey && record.address) {
+    unlockedPrivateKeys.set(owner, record.privateKey)
+    return record.privateKey
+  }
+
+  // Encrypted v2 — cannot unlock without passphrase (removed from product)
+  if (record?.v === 2 && record.ciphertext) {
+    return null
+  }
+
+  const legacy = readLegacyPlaintext(owner)
+  if (legacy?.privateKey) {
+    unlockedPrivateKeys.set(owner, legacy.privateKey)
+    // Upgrade to v3 so next load is consistent
+    try {
+      persistAgent(owner, {
+        address: legacy.address,
+        privateKey: legacy.privateKey,
+        approvedAt: legacy.approvedAt || Date.now(),
+        name: legacy.name || AGENT_NAME,
+      })
+    } catch {
+      /* ignore */
+    }
+    return legacy.privateKey
+  }
+
+  return null
+}
+
+function persistAgent(ownerAddress, session) {
+  const owner = normalizeOwner(ownerAddress)
+  localStorage.setItem(
+    agentStorageKey(owner),
+    JSON.stringify({
+      v: 3,
+      address: session.address,
+      privateKey: session.privateKey,
+      approvedAt: session.approvedAt,
+      name: session.name,
+    }),
+  )
+  try {
+    localStorage.removeItem(legacyStorageKey(owner))
+  } catch {
+    /* ignore */
+  }
+  unlockedPrivateKeys.set(owner, session.privateKey)
+}
+
+/**
+ * Public agent status (never returns the private key).
+ * @returns {{ address, approvedAt, name, unlocked, needsReapprove } | null}
  */
 export function getAgentStatus(ownerAddress) {
   if (!ownerAddress) return null
   const owner = normalizeOwner(ownerAddress)
   const record = readRawRecord(owner)
-  if (record?.v === 2 && record.address && record.ciphertext) {
+
+  // Old passphrase-encrypted vault — must re-approve
+  if (record?.v === 2 && record.ciphertext && record.address) {
     return {
       address: record.address,
       approvedAt: record.approvedAt || null,
       name: record.name || AGENT_NAME,
-      unlocked: unlockedPrivateKeys.has(owner),
-      needsMigration: false,
+      unlocked: false,
+      needsReapprove: true,
     }
   }
-  const legacy = readLegacyPlaintext(owner)
-  if (legacy) {
+
+  const pk = hydrateAgentKey(ownerAddress)
+  if (pk && (record?.address || readLegacyPlaintext(owner)?.address)) {
+    const address =
+      record?.address || readLegacyPlaintext(owner)?.address || new Wallet(pk).address
     return {
-      address: legacy.address,
-      approvedAt: legacy.approvedAt || null,
-      name: legacy.name || AGENT_NAME,
-      unlocked: unlockedPrivateKeys.has(owner),
-      needsMigration: true,
+      address,
+      approvedAt: record?.approvedAt || readLegacyPlaintext(owner)?.approvedAt || null,
+      name: record?.name || AGENT_NAME,
+      unlocked: true,
+      needsReapprove: false,
     }
   }
+
   return null
 }
 
@@ -162,11 +225,12 @@ export function loadAgentSession(ownerAddress) {
 }
 
 export function isAgentUnlocked(ownerAddress) {
-  return unlockedPrivateKeys.has(normalizeOwner(ownerAddress))
+  return Boolean(hydrateAgentKey(ownerAddress))
 }
 
-export function lockAgentSession(ownerAddress) {
-  unlockedPrivateKeys.delete(normalizeOwner(ownerAddress))
+/** No-op: passphrase lock removed for testnet UX. */
+export function lockAgentSession(_ownerAddress) {
+  /* intentionally empty */
 }
 
 export function clearAgentSession(ownerAddress) {
@@ -182,102 +246,48 @@ export function clearAgentSession(ownerAddress) {
 }
 
 function requireUnlockedPrivateKey(ownerAddress) {
-  const pk = unlockedPrivateKeys.get(normalizeOwner(ownerAddress))
+  const pk = hydrateAgentKey(ownerAddress)
   if (!pk) {
-    throw new Error('Unlock your trading agent with your passphrase first.')
+    throw new Error('Approve a trading agent first.')
   }
   return pk
 }
 
-async function persistEncryptedAgent(ownerAddress, session, passphrase) {
-  const sealed = await encryptSecret(passphrase, session.privateKey)
-  localStorage.setItem(
-    agentStorageKey(ownerAddress),
-    JSON.stringify({
-      v: 2,
-      address: session.address,
-      approvedAt: session.approvedAt,
-      name: session.name,
-      salt: sealed.salt,
-      iv: sealed.iv,
-      ciphertext: sealed.ciphertext,
-    }),
-  )
-  try {
-    localStorage.removeItem(legacyStorageKey(ownerAddress))
-  } catch {
-    /* ignore */
-  }
-  unlockedPrivateKeys.set(normalizeOwner(ownerAddress), session.privateKey)
+/** @deprecated passphrase removed — clears encrypted vault so user can re-approve */
+export async function migrateAgentEncryption(ownerAddress) {
+  clearAgentSession(ownerAddress)
+  return null
 }
 
-/**
- * Encrypt a legacy plaintext agent (v1) with a new passphrase.
- * Does not re-approve on Hyperliquid — only upgrades local storage.
- */
-export async function migrateAgentEncryption(ownerAddress, passphrase, confirm) {
-  validatePassphrase(passphrase, { confirm })
-  const legacy = readLegacyPlaintext(ownerAddress)
-  if (!legacy?.privateKey) {
-    throw new Error('No legacy agent key to migrate.')
-  }
-  await persistEncryptedAgent(
-    ownerAddress,
-    {
-      address: legacy.address,
-      privateKey: legacy.privateKey,
-      approvedAt: legacy.approvedAt || Date.now(),
-      name: legacy.name || AGENT_NAME,
-    },
-    passphrase,
-  )
+/** @deprecated passphrase removed — agent auto-loads from local storage */
+export async function unlockAgentSession(ownerAddress) {
   return getAgentStatus(ownerAddress)
 }
 
 /**
- * Unlock encrypted agent for this browser tab session.
+ * Generate a trading agent and approve it with MetaMask.
+ * Agent cannot withdraw funds. Key is stored locally (testnet / hackathon UX).
  */
-export async function unlockAgentSession(ownerAddress, passphrase) {
-  validatePassphrase(passphrase)
-  const record = readRawRecord(ownerAddress)
-  if (!record || record.v !== 2) {
-    throw new Error('No encrypted agent found. Approve an agent first.')
-  }
-  const privateKey = await decryptSecret(passphrase, record)
-  // Sanity: recovered key should match stored address
-  const recovered = new Wallet(privateKey).address.toLowerCase()
-  if (recovered !== String(record.address).toLowerCase()) {
-    throw new Error('Decrypted key does not match the approved agent.')
-  }
-  unlockedPrivateKeys.set(normalizeOwner(ownerAddress), privateKey)
-  return getAgentStatus(ownerAddress)
-}
-
-/**
- * Generate a trading agent, approve it with MetaMask, encrypt with passphrase.
- * Agent cannot withdraw funds.
- */
-export async function approveTradingAgent(ownerAddress, passphrase, confirm) {
+export async function approveTradingAgent(ownerAddress) {
   if (!ownerAddress) throw new Error('Connect your wallet first.')
-  validatePassphrase(passphrase, { confirm })
 
   const owner = normalizeOwner(ownerAddress)
   let agent
 
-  // Reuse unlocked key, or decrypt existing vault with the same passphrase
-  const existingRecord = readRawRecord(owner)
-  if (unlockedPrivateKeys.has(owner)) {
-    agent = new Wallet(unlockedPrivateKeys.get(owner))
-  } else if (existingRecord?.v === 2) {
-    try {
-      const pk = await decryptSecret(passphrase, existingRecord)
-      agent = new Wallet(pk)
-    } catch {
-      agent = Wallet.createRandom()
-    }
+  const existingPk = hydrateAgentKey(owner)
+  if (existingPk) {
+    agent = new Wallet(existingPk)
   } else {
-    const legacy = readLegacyPlaintext(owner)
-    agent = legacy?.privateKey ? new Wallet(legacy.privateKey) : Wallet.createRandom()
+    // Drop unreadable encrypted vault before creating a fresh agent
+    const record = readRawRecord(owner)
+    if (record?.v === 2) {
+      try {
+        localStorage.removeItem(agentStorageKey(owner))
+      } catch {
+        /* ignore */
+      }
+    }
+    agent = Wallet.createRandom()
   }
 
   const exchange = await getMasterExchange()
@@ -286,13 +296,12 @@ export async function approveTradingAgent(ownerAddress, passphrase, confirm) {
     agentName: AGENT_NAME,
   })
 
-  const session = {
+  persistAgent(ownerAddress, {
     address: agent.address,
     privateKey: agent.privateKey,
     approvedAt: Date.now(),
     name: AGENT_NAME,
-  }
-  await persistEncryptedAgent(ownerAddress, session, passphrase)
+  })
   return getAgentStatus(ownerAddress)
 }
 

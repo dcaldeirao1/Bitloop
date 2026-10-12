@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { truncateAddress } from '../lib/automations'
-import { AGENT_PASSPHRASE_MIN } from '../lib/agentVault'
 import {
   HL_APP_URL,
   HL_FAUCET_HINT,
-  HL_IS_TESTNET,
   PERP_MARKETS,
   approveTradingAgent,
   clearAgentSession,
@@ -18,15 +17,15 @@ import {
   getAgentStatus,
   hlErrorMessage,
   isStopLossSafe,
-  lockAgentSession,
   maxSafeStopLossPct,
-  migrateAgentEncryption,
   parsePositions,
   placeOrderWithTpsl,
   stopLossPxFromPct,
   takeProfitPxFromPct,
-  unlockAgentSession,
 } from '../lib/hyperliquid'
+import { RULE_CATEGORY, getCategoryMeta } from '../lib/ruleCategories'
+import { EnvBadge } from './RuleStepsHeader'
+import { RuleFlowSummary } from './RuleFlowSummary'
 import { PerpsSandbox } from './PerpsSandbox'
 
 const POLL_MS = 8_000
@@ -44,50 +43,11 @@ function Metric({ label, value, valueClass = '' }) {
   )
 }
 
-function PassphraseFields({
-  passphrase,
-  confirm,
-  onPassphrase,
-  onConfirm,
-  showConfirm = true,
-  idPrefix = 'agent',
-}) {
-  return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      <label className="block text-sm">
-        <span className="text-muted">Passphrase</span>
-        <input
-          id={`${idPrefix}-pass`}
-          type="password"
-          autoComplete="new-password"
-          className="mt-1.5 w-full rounded-xl border border-line bg-bg px-3 py-2.5 text-ink"
-          value={passphrase}
-          onChange={(e) => onPassphrase(e.target.value)}
-          placeholder={`At least ${AGENT_PASSPHRASE_MIN} characters`}
-        />
-      </label>
-      {showConfirm ? (
-        <label className="block text-sm">
-          <span className="text-muted">Confirm passphrase</span>
-          <input
-            id={`${idPrefix}-confirm`}
-            type="password"
-            autoComplete="new-password"
-            className="mt-1.5 w-full rounded-xl border border-line bg-bg px-3 py-2.5 text-ink"
-            value={confirm}
-            onChange={(e) => onConfirm(e.target.value)}
-            placeholder="Repeat passphrase"
-          />
-        </label>
-      ) : null}
-    </div>
-  )
-}
-
 /**
  * Hyperliquid perps desk — connect agent, search markets, long/short with TP/SL.
  */
 export function PerpsDesk({ address }) {
+  const [params, setParams] = useSearchParams()
   const [agent, setAgent] = useState(() => getAgentStatus(address))
   const [account, setAccount] = useState(null)
   const [markets, setMarkets] = useState(PERP_MARKETS)
@@ -95,10 +55,6 @@ export function PerpsDesk({ address }) {
   const [busy, setBusy] = useState(null)
   const [error, setError] = useState(null)
   const [lastTrade, setLastTrade] = useState(null)
-
-  const [passphrase, setPassphrase] = useState('')
-  const [passConfirm, setPassConfirm] = useState('')
-  const [unlockPass, setUnlockPass] = useState('')
 
   const [coin, setCoin] = useState('BTC')
   const [marketQuery, setMarketQuery] = useState('')
@@ -109,7 +65,8 @@ export function PerpsDesk({ address }) {
   const [tpPct, setTpPct] = useState('20')
   const [slPct, setSlPct] = useState('5')
   const [marginMode, setMarginMode] = useState('isolated')
-  const [perpsTab, setPerpsTab] = useState('trade')
+  const [perpsTab, setPerpsTab] = useState('sandbox')
+  const [deployDraft, setDeployDraft] = useState(null)
   const marketBoxRef = useRef(null)
 
   const refreshAgent = useCallback(() => {
@@ -157,9 +114,6 @@ export function PerpsDesk({ address }) {
   }, [])
 
   useEffect(() => {
-    setPassphrase('')
-    setPassConfirm('')
-    setUnlockPass('')
     refreshAgent()
     void refresh()
   }, [address, refresh, refreshAgent])
@@ -189,10 +143,8 @@ export function PerpsDesk({ address }) {
     setBusy('approve')
     setError(null)
     try {
-      const session = await approveTradingAgent(address, passphrase, passConfirm)
+      const session = await approveTradingAgent(address)
       setAgent(session)
-      setPassphrase('')
-      setPassConfirm('')
     } catch (err) {
       setError(hlErrorMessage(err, 'Agent approval failed'))
     } finally {
@@ -200,49 +152,12 @@ export function PerpsDesk({ address }) {
     }
   }
 
-  const onUnlock = async () => {
-    setBusy('unlock')
-    setError(null)
-    try {
-      const session = await unlockAgentSession(address, unlockPass)
-      setAgent(session)
-      setUnlockPass('')
-    } catch (err) {
-      setError(hlErrorMessage(err, 'Unlock failed'))
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const onMigrate = async () => {
-    setBusy('migrate')
-    setError(null)
-    try {
-      const session = await migrateAgentEncryption(address, passphrase, passConfirm)
-      setAgent(session)
-      setPassphrase('')
-      setPassConfirm('')
-    } catch (err) {
-      setError(hlErrorMessage(err, 'Encryption upgrade failed'))
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const onLock = () => {
-    lockAgentSession(address)
-    refreshAgent()
-  }
-
   const onDisconnectAgent = () => {
     clearAgentSession(address)
     setAgent(null)
-    setPassphrase('')
-    setPassConfirm('')
-    setUnlockPass('')
   }
 
-  const agentReady = Boolean(agent?.unlocked && !agent?.needsMigration)
+  const agentReady = Boolean(agent?.unlocked && !agent?.needsReapprove)
 
   const onSubmitOrder = async () => {
     setBusy('order')
@@ -339,24 +254,74 @@ export function PerpsDesk({ address }) {
     setSlPct(String(Math.floor(maxSlPct * 10) / 10))
   }
 
+  const perpsMeta = getCategoryMeta(RULE_CATEGORY.PERPS)
+
+  const applyBacktestToDeploy = useCallback(
+    (payload) => {
+      const strategy = payload?.strategy || {}
+      const signal = payload?.signal
+      const nextCoin = String(strategy.coin || 'BTC').toUpperCase()
+      setCoin(nextCoin)
+      setSide(signal?.side === 'short' ? 'short' : 'long')
+      setLeverage(String(Math.max(1, Math.floor(Number(strategy.leverage) || 5))))
+      setTpPct(String(Number(strategy.takeProfitPct) || 4))
+      setSlPct(String(Number(strategy.stopLossPct) || 2))
+      setDeployDraft({
+        strategy,
+        signal,
+        metrics: payload?.metrics || payload?.result?.metrics || null,
+        describe: `${nextCoin} · ${strategy.interval || '1h'} · ${signal?.side || 'long'}`,
+      })
+      setPerpsTab('trade')
+      setError(null)
+      void refresh()
+    },
+    [refresh],
+  )
+
+  // Resume deploy from /app/new?type=perps → sessionStorage handoff
+  useEffect(() => {
+    if (params.get('deploy') !== '1') return
+    try {
+      const raw = sessionStorage.getItem('pm.perps.deployDraft')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        applyBacktestToDeploy(parsed)
+        sessionStorage.removeItem('pm.perps.deployDraft')
+      }
+    } catch {
+      /* ignore */
+    }
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete('deploy')
+        if (!next.get('section')) next.set('section', 'perps')
+        return next
+      },
+      { replace: true },
+    )
+  }, [params, setParams, applyBacktestToDeploy])
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="dash-title">Perps</h1>
-            {HL_IS_TESTNET ? (
-              <span className="rounded-full border border-line bg-surface px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-[0.1em] text-muted">
-                Testnet
-              </span>
-            ) : null}
+            <h1 className="dash-title">Perps strategies</h1>
+            <EnvBadge
+              env={{ label: perpsMeta.envLabel, tone: perpsMeta.envTone }}
+            />
           </div>
           <p className="dash-subtitle mt-1 max-w-xl">
-            Trade Hyperliquid perps with an encrypted agent, or backtest MA / RSI / volume
-            strategies in the sandbox.
+            Backtest first, then deploy the same strategy on Hyperliquid with real
+            funds. You confirm every live order.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Link to="/app/new?type=perps" className="btn-outline text-sm">
+            New rule
+          </Link>
           <a
             href={HL_APP_URL}
             target="_blank"
@@ -373,25 +338,35 @@ export function PerpsDesk({ address }) {
         </div>
       </div>
 
+      <RuleFlowSummary
+        triggerTitle="Signal"
+        triggerBody={perpsMeta.triggerSummary}
+        actionTitle="Deploy"
+        actionBody={perpsMeta.actionSummary}
+        envBadge={
+          <EnvBadge env={{ label: perpsMeta.envLabel, tone: perpsMeta.envTone }} />
+        }
+      />
+
       <div className="dash-segment">
-        <button
-          type="button"
-          className={perpsTab === 'trade' ? 'is-active' : ''}
-          onClick={() => setPerpsTab('trade')}
-        >
-          Trade
-        </button>
         <button
           type="button"
           className={perpsTab === 'sandbox' ? 'is-active' : ''}
           onClick={() => setPerpsTab('sandbox')}
         >
-          Sandbox
+          1. Backtest
+        </button>
+        <button
+          type="button"
+          className={perpsTab === 'trade' ? 'is-active' : ''}
+          onClick={() => setPerpsTab('trade')}
+        >
+          2. Deploy live
         </button>
       </div>
 
       {perpsTab === 'sandbox' ? (
-        <PerpsSandbox markets={markets} />
+        <PerpsSandbox markets={markets} onContinueToDeploy={applyBacktestToDeploy} />
       ) : (
       <>
 
@@ -436,97 +411,48 @@ export function PerpsDesk({ address }) {
             <h2 className="text-base font-semibold tracking-tight text-ink">Trading agent</h2>
             <p className="mt-1 max-w-lg text-sm text-muted">
               One MetaMask signature approves an API wallet that can trade but cannot withdraw.
-              The agent private key is encrypted with your passphrase (AES-GCM) and only unlocked
-              in memory for this tab.
+              No extra password — the agent stays ready in this browser for testnet trading.
             </p>
           </div>
           {agent ? (
-            <div className="flex flex-wrap gap-2">
-              {agent.unlocked && !agent.needsMigration ? (
-                <button type="button" className="btn-ghost text-sm" onClick={onLock}>
-                  Lock
-                </button>
-              ) : null}
-              <button type="button" className="btn-ghost text-sm" onClick={onDisconnectAgent}>
-                Forget agent
-              </button>
-            </div>
+            <button type="button" className="btn-ghost text-sm" onClick={onDisconnectAgent}>
+              Forget agent
+            </button>
           ) : null}
         </div>
 
-        {agent?.needsMigration ? (
+        {agent?.needsReapprove ? (
           <div className="mt-4 space-y-3">
-            <div className="rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger">
-              This agent was saved in plaintext from an earlier build. Set a passphrase to encrypt
-              it before trading.
+            <div className="rounded-xl border border-line bg-bg px-4 py-3 text-sm text-muted">
+              This browser had a passphrase-locked agent from an older build. Forget it and
+              approve again — one MetaMask click, no password.
             </div>
-            <PassphraseFields
-              idPrefix="migrate"
-              passphrase={passphrase}
-              confirm={passConfirm}
-              onPassphrase={setPassphrase}
-              onConfirm={setPassConfirm}
-            />
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={Boolean(busy)}
-              onClick={() => void onMigrate()}
-            >
-              {busy === 'migrate' ? 'Encrypting…' : 'Encrypt agent key'}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="btn-outline" onClick={onDisconnectAgent}>
+                Forget old agent
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={Boolean(busy)}
+                onClick={() => void onApprove()}
+              >
+                {busy === 'approve' ? 'Confirm in MetaMask…' : 'Approve trading agent'}
+              </button>
+            </div>
           </div>
-        ) : agent?.unlocked ? (
+        ) : agentReady ? (
           <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-bg px-4 py-3">
             <span className="inline-flex h-2 w-2 rounded-full bg-teal" aria-hidden />
             <div>
-              <p className="text-sm font-medium text-ink">Agent unlocked</p>
+              <p className="text-sm font-medium text-ink">Agent ready</p>
               <p className="font-mono text-xs text-muted">
-                {truncateAddress(agent.address, 6)} · key held in memory only
+                {truncateAddress(agent.address, 6)}
               </p>
             </div>
           </div>
-        ) : agent ? (
-          <div className="mt-4 space-y-3">
-            <div className="rounded-xl border border-line bg-bg px-4 py-3">
-              <p className="text-sm font-medium text-ink">Agent locked</p>
-              <p className="font-mono text-xs text-muted">{truncateAddress(agent.address, 6)}</p>
-            </div>
-            <label className="block max-w-sm text-sm">
-              <span className="text-muted">Passphrase</span>
-              <input
-                type="password"
-                autoComplete="current-password"
-                className="mt-1.5 w-full rounded-xl border border-line bg-bg px-3 py-2.5 text-ink"
-                value={unlockPass}
-                onChange={(e) => setUnlockPass(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void onUnlock()
-                }}
-              />
-            </label>
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={Boolean(busy) || unlockPass.length < AGENT_PASSPHRASE_MIN}
-              onClick={() => void onUnlock()}
-            >
-              {busy === 'unlock' ? 'Unlocking…' : 'Unlock agent'}
-            </button>
-          </div>
         ) : (
-          <div className="mt-4 space-y-3">
-            <PassphraseFields
-              idPrefix="approve"
-              passphrase={passphrase}
-              confirm={passConfirm}
-              onPassphrase={setPassphrase}
-              onConfirm={setPassConfirm}
-            />
-            <p className="text-[12px] text-muted">
-              Choose a strong passphrase you will remember — we cannot recover encrypted keys if
-              you forget it (you can always approve a new agent).
-            </p>
+          <div className="mt-4">
             <button
               type="button"
               className="btn-primary"
@@ -539,13 +465,53 @@ export function PerpsDesk({ address }) {
         )}
       </section>
 
-      {/* Order ticket */}
+      {/* Order ticket — deploy backtested strategy or adjust manually */}
       <section className="rounded-2xl border border-line bg-surface p-5">
-        <h2 className="text-base font-semibold tracking-tight text-ink">Trade with TP / SL</h2>
+        <h2 className="text-base font-semibold tracking-tight text-ink">
+          2. Deploy on Hyperliquid
+        </h2>
         <p className="mt-1 text-sm text-muted">
-          Search any Hyperliquid perp, then open a long or short with linked take-profit and
-          stop-loss.
+          {deployDraft
+            ? 'Parameters loaded from your backtest. Confirm margin, then place the live order.'
+            : 'Run a backtest first for best results — or set market, side, leverage, and TP/SL here.'}
         </p>
+
+        {deployDraft ? (
+          <div className="mt-4 rounded-xl border border-teal/30 bg-teal/5 px-4 py-3 text-sm">
+            <p className="font-medium text-ink">
+              Strategy ready · {deployDraft.describe || `${coin} ${side}`}
+            </p>
+            <p className="mt-1 text-[12px] text-muted">
+              {deployDraft.signal?.reason || 'From backtest'}
+              {deployDraft.metrics
+                ? ` · Backtest return ${
+                    deployDraft.metrics.returnPct >= 0 ? '+' : ''
+                  }${deployDraft.metrics.returnPct.toFixed(1)}% · ${
+                    deployDraft.metrics.trades
+                  } trades`
+                : ''}
+            </p>
+            <button
+              type="button"
+              className="mt-2 text-[12px] font-medium text-teal hover:underline"
+              onClick={() => setPerpsTab('sandbox')}
+            >
+              ← Edit backtest
+            </button>
+          </div>
+        ) : (
+          <div className="mt-4 rounded-xl border border-dashed border-line bg-bg px-4 py-3 text-sm text-muted">
+            No backtest loaded yet.{' '}
+            <button
+              type="button"
+              className="font-medium text-teal hover:underline"
+              onClick={() => setPerpsTab('sandbox')}
+            >
+              Run a backtest
+            </button>{' '}
+            then click Deploy this strategy.
+          </div>
+        )}
 
         <div className="mt-4 flex gap-2">
           <button
@@ -771,16 +737,16 @@ export function PerpsDesk({ address }) {
           onClick={() => void onSubmitOrder()}
         >
           {busy === 'order'
-            ? 'Submitting…'
+            ? 'Deploying…'
             : !agent
-              ? 'Approve agent to trade'
-              : agent.needsMigration
-                ? 'Encrypt agent to trade'
+              ? 'Approve agent to deploy'
+              : agent.needsReapprove
+                ? 'Re-approve agent to deploy'
                 : !agent.unlocked
-                  ? 'Unlock agent to trade'
+                  ? 'Approve agent to deploy'
                   : slUnsafe
                     ? 'Fix stop-loss to continue'
-                    : `${side === 'short' ? 'Short' : 'Long'} ${coin} ${levNum}×`}
+                    : `Deploy ${side === 'short' ? 'short' : 'long'} ${coin} ${levNum}×`}
         </button>
 
         {lastTrade ? (

@@ -149,6 +149,11 @@ export function getAutomationStatus(rule, balances, onchainTiming = null) {
   if (!rule?.enabled) {
     return { id: 'paused', label: 'Paused', tone: '' }
   }
+  const isSpot =
+    rule?.action?.type === 'trading_strategy' || rule?.trigger?.type === 'screener'
+  if (isSpot) {
+    return { id: 'paper', label: 'Paper', tone: 'is-paper' }
+  }
   const funding = getAutomationFunding(rule, balances)
   if (funding.starved) {
     return { id: 'needs_attention', label: 'Needs attention', tone: 'is-warn' }
@@ -166,7 +171,7 @@ export function getAutomationStatus(rule, balances, onchainTiming = null) {
 export function getAutomationTitle(rule) {
   const type = rule?.action?.type
   const trigger = rule?.trigger?.type
-  if (type === 'trading_strategy' || trigger === 'screener') return 'Trenches'
+  if (type === 'trading_strategy' || trigger === 'screener') return 'Spot strategy'
   if (type === 'sell_eth_usdc') return 'Sell ETH'
   if (type === 'sell_token_eth') return 'Sell token'
   if (type === 'buy_token') return 'Buy token'

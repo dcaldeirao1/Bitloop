@@ -4,6 +4,8 @@ import {
   formatHistoryTime,
   historySubtitle,
 } from '../lib/history'
+import { activityCategoryId } from '../lib/unifiedActivity'
+import { CategoryBadge } from './RuleStepsHeader'
 
 export function ActivityList({ items, emptyText = 'No activity yet.', limit }) {
   const rows = limit ? items.slice(0, limit) : items
@@ -13,7 +15,8 @@ export function ActivityList({ items, emptyText = 'No activity yet.', limit }) {
       <div className="rounded-xl border border-dashed border-line bg-bg/50 px-4 py-8 text-center">
         <p className="text-[13px] text-muted">{emptyText}</p>
         <p className="mx-auto mt-1.5 max-w-sm text-[12px] text-muted">
-          Confirmed on-chain activity appears here after deposits, withdrawals, or keeper runs.
+          Events from My Automations (on-chain), Spot (paper), and Perps appear here
+          when available. Etherscan links show when a Sepolia tx hash exists.
         </p>
       </div>
     )
@@ -23,6 +26,7 @@ export function ActivityList({ items, emptyText = 'No activity yet.', limit }) {
     <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
       {rows.map((item) => {
         const amount = formatActivityAmount(item)
+        const categoryId = activityCategoryId(item)
         return (
           <li
             key={item.id}
@@ -30,12 +34,13 @@ export function ActivityList({ items, emptyText = 'No activity yet.', limit }) {
           >
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
+                <CategoryBadge categoryId={categoryId} />
                 <TypeBadge type={item.type} />
                 <span className="text-[13px] font-medium text-ink">{item.label}</span>
                 <StatusBadge status={item.status || 'confirmed'} />
               </div>
               <p className="mt-1 text-[12px] leading-snug text-muted">
-                {historySubtitle(item)}
+                {item.subtitle || historySubtitle(item)}
               </p>
               <p
                 className="mt-0.5 text-[11px] text-muted"
@@ -85,13 +90,13 @@ function formatActivityAmount(item) {
       ),
     }
   }
-  if (item.type === 'deposit') {
+  if (item.type === 'deposit' || item.type === 'paper_buy') {
     return {
       className: 'text-teal',
       text: `+${item.amountFormatted} ${item.amountAsset || 'USDC'}`,
     }
   }
-  if (item.type === 'withdraw') {
+  if (item.type === 'withdraw' || item.type === 'paper_exit') {
     return {
       className: 'text-ink',
       text: `−${item.amountFormatted} ${item.amountAsset || 'USDC'}`,
@@ -117,6 +122,16 @@ function StatusBadge({ status }) {
       </span>
     )
   }
+  if (status === 'paper') {
+    return (
+      <span className="rule-env-badge is-paper">Paper</span>
+    )
+  }
+  if (status === 'testnet') {
+    return (
+      <span className="rule-env-badge is-testnet">Testnet</span>
+    )
+  }
   return (
     <span className="rounded-md bg-teal-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal-deep">
       Confirmed
@@ -131,6 +146,9 @@ function TypeBadge({ type }) {
     split: 'bg-mango-soft text-mango',
     recurring: 'bg-mango-soft text-mango',
     dca: 'bg-teal-soft text-teal-deep',
+    paper_buy: 'bg-teal-soft text-teal-deep',
+    paper_exit: 'bg-mango-soft text-mango',
+    paper: 'bg-bg text-ink-soft',
   }
   const labels = {
     deposit: 'Deposit',
@@ -138,6 +156,9 @@ function TypeBadge({ type }) {
     split: 'Split',
     recurring: 'Schedule',
     dca: 'Swap',
+    paper_buy: 'Paper buy',
+    paper_exit: 'Paper exit',
+    paper: 'Paper',
   }
   return (
     <span

@@ -261,7 +261,7 @@ export function VaultPage() {
               Refresh
             </button>
             <Link to="/app/new" className="btn-primary">
-              New automation
+              New rule
             </Link>
           </div>
         </div>
@@ -282,7 +282,7 @@ export function VaultPage() {
                 {busy === 'create' ? 'Deploying…' : 'Deploy vault'}
               </button>
               <Link to="/app/new" className="btn-outline">
-                New automation
+                New rule
               </Link>
             </div>
           </section>

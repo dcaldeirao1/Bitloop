@@ -12,18 +12,23 @@ import { ThemeToggle } from '../components/ThemeToggle'
 const STEPS = [
   {
     n: '01',
-    title: 'Connect MetaMask',
-    body: 'Link your wallet on Sepolia. Session persists until you disconnect.',
+    title: 'Trigger',
+    body: 'Choose when the rule fires — deposit, schedule, token filter, or signal.',
   },
   {
     n: '02',
-    title: 'Compose a rule',
-    body: 'IF → THEN blocks for splits, schedules, or DCA. Confirm once on-chain.',
+    title: 'Action',
+    body: 'Define what happens — split, send, DCA, paper buy, or manual perps trade.',
   },
   {
     n: '03',
-    title: 'Fund & forget',
-    body: 'Deposit to your vault. The keeper executes while the app stays closed.',
+    title: 'Test',
+    body: 'Preview on Sepolia, paper-trade spot, or backtest perps before real risk.',
+  },
+  {
+    n: '04',
+    title: 'Deploy',
+    body: 'Go live on-chain, run a paper scan, or trade Hyperliquid testnet — honestly labeled.',
   },
 ]
 
@@ -55,12 +60,12 @@ const FAQS = [
 ]
 
 const PROOF = [
-  'Non-custodial vaults',
-  'MetaMask-native',
-  'On-chain rules',
-  'Keeper offline execution',
-  'Sepolia USDC',
-  'Confirmed history',
+  'Rules that run your money',
+  'My Automations on Sepolia',
+  'Spot strategies (paper)',
+  'Perps: backtest then deploy',
+  'Test before deploy',
+  'Non-custodial',
 ]
 
 export function Landing() {
@@ -116,16 +121,14 @@ function Hero() {
         <div className="landing-hero-copy">
           <p className="landing-hero-kicker animate-in">
             <span className="landing-hero-kicker-dot" />
-            Live on Sepolia · Non-custodial
+            Rules · Test · Deploy
           </p>
           <h1 className="landing-hero-headline animate-in">
-            Set rules for your crypto.
-            <span className="landing-hero-accent"> Let the vault execute.</span>
+            Your money, on autopilot.
           </h1>
           <p className="landing-hero-sub animate-in-late">
-            IF–THEN automations for a vault you own — split deposits, schedule
-            payouts, and DCA. Keys stay in MetaMask. Keeper runs while you are
-            offline.
+            Build rules that save, pay, and trade for you. Test every rule before
+            it touches real funds.
           </p>
           <div className="landing-hero-actions animate-in-late">
             <Link to="/app" className="landing-btn-primary">
@@ -136,9 +139,9 @@ function Hero() {
             </a>
           </div>
           <ul className="landing-hero-trust animate-in-late">
-            <li>Non-custodial vault</li>
-            <li>On-chain rules</li>
-            <li>Confirmed history</li>
+            <li>My Automations</li>
+            <li>Spot strategies</li>
+            <li>Perps strategies</li>
           </ul>
         </div>
 
@@ -171,24 +174,31 @@ function FeatureStory() {
   return (
     <section id="product" className="landing-section">
       <div className="landing-section-inner">
+        <Reveal className="landing-section-head">
+          <p className="landing-eyebrow">One product · three rule types</p>
+          <h2 className="landing-section-title">Rules that run your money</h2>
+          <p className="landing-section-body mx-auto mt-3 max-w-xl">
+            Every feature is the same shape: Trigger → Action → Test → Deploy.
+          </p>
+        </Reveal>
+
         <article className="landing-feature">
           <Reveal className="landing-feature-copy">
-            <p className="landing-eyebrow">Automations</p>
+            <p className="landing-eyebrow">My Automations</p>
             <h2 className="landing-section-title">
-              Build rules that read like sentences
+              Splits, schedules, and DCA from your vault
             </h2>
             <p className="landing-section-body">
-              Compose IF–THEN blocks for splits, scheduled transfers, and DCA.
-              Start from templates, preview before deploy, and keep every rule
-              scoped to your wallet.
+              On-chain rules on Sepolia. Preview, then deploy to a vault you own.
+              Keeper runs while you are offline.
             </p>
             <ul className="landing-checklist">
-              <li>Visual builder — no Solidity required</li>
-              <li>Templates for income splits, schedules, and DCA</li>
-              <li>Preview before MetaMask confirms on-chain setup</li>
+              <li>Environment: On-chain (Sepolia)</li>
+              <li>Deploy to vault after preview</li>
+              <li>Confirmed activity with explorer links</li>
             </ul>
-            <Link to="/app/new" className="landing-btn-primary mt-8 inline-flex">
-              Create automation
+            <Link to="/app/new?type=save-pay" className="landing-btn-primary mt-8 inline-flex">
+              New automation
             </Link>
           </Reveal>
           <Reveal className="landing-feature-visual" delay={60} threshold={0.05}>
@@ -198,22 +208,45 @@ function FeatureStory() {
 
         <article className="landing-feature is-reverse">
           <Reveal className="landing-feature-copy">
-            <p className="landing-eyebrow">Vault</p>
+            <p className="landing-eyebrow">Spot strategies</p>
             <h2 className="landing-section-title">
-              One address you own. Full history.
+              Screen tokens. Test with paper funds.
             </h2>
             <p className="landing-section-body">
-              Deploy a smart-account vault on Sepolia. Deposit and withdraw with
-              MetaMask. Automations run against that single balance — confirmed
-              activity links out to the explorer.
+              Trigger when a token matches your filters. Action: buy with TP/SL.
+              Paper only — live scan still uses mock funds.
             </p>
             <ul className="landing-checklist">
-              <li>Non-custodial — keys stay in MetaMask</li>
-              <li>USDC and ETH in one vault</li>
-              <li>Deposits, splits, schedules, and DCA in activity</li>
+              <li>Environment: Paper</li>
+              <li>Test with paper funds</li>
+              <li>Run live scan (paper)</li>
             </ul>
-            <Link to="/app/vault" className="landing-btn-ghost mt-8 inline-flex">
-              Open vault
+            <Link to="/app/new?type=spot" className="landing-btn-primary mt-8 inline-flex">
+              New spot rule
+            </Link>
+          </Reveal>
+          <Reveal className="landing-feature-visual" delay={60} threshold={0.05}>
+            <DemoVault />
+          </Reveal>
+        </article>
+
+        <article className="landing-feature">
+          <Reveal className="landing-feature-copy">
+            <p className="landing-eyebrow">Perps strategies</p>
+            <h2 className="landing-section-title">
+              Backtest first. Deploy with real funds.
+            </h2>
+            <p className="landing-section-body">
+              Tune MA / RSI signals on history, then deploy the same parameters on
+              Hyperliquid. You confirm every live order.
+            </p>
+            <ul className="landing-checklist">
+              <li>Environment: Hyperliquid</li>
+              <li>Backtest first</li>
+              <li>Deploy strategy with real funds</li>
+            </ul>
+            <Link to="/app/new?type=perps" className="landing-btn-primary mt-8 inline-flex">
+              New perps rule
             </Link>
           </Reveal>
           <Reveal className="landing-feature-visual" delay={60} threshold={0.05}>
@@ -231,16 +264,16 @@ function HowItWorks() {
       <div className="landing-section-inner">
         <Reveal className="landing-section-head">
           <p className="landing-eyebrow">How it works</p>
-          <h2 className="landing-section-title">Live in three steps</h2>
+          <h2 className="landing-section-title">Trigger, Action, Test, Deploy</h2>
           <p className="landing-section-body mx-auto mt-3 max-w-xl">
-            From wallet connect to keeper execution — the shortest path to a real
-            on-chain rule.
+            One flow for My Automations, Spot, and Perps — with honest environments
+            for each.
           </p>
         </Reveal>
 
-        <ol className="landing-steps">
+        <ol className="landing-steps landing-steps-four">
           {STEPS.map((step, i) => (
-            <Reveal key={step.n} as="li" delay={i * 100} className="landing-step-card">
+            <Reveal key={step.n} as="li" delay={i * 80} className="landing-step-card">
               <span className="landing-step-n">{step.n}</span>
               <h3 className="landing-step-title">{step.title}</h3>
               <p className="landing-step-body">{step.body}</p>
@@ -250,9 +283,9 @@ function HowItWorks() {
 
         <Reveal delay={280}>
           <div className="landing-rule-row">
-            <span className="landing-rule-chip">Receive USDC → send 20%</span>
-            <span className="landing-rule-chip">Every day → send USDC</span>
-            <span className="landing-rule-chip">Every hour → buy ETH</span>
+            <span className="landing-rule-chip">Receive USDC → split 20%</span>
+            <span className="landing-rule-chip">Token filters → paper buy</span>
+            <span className="landing-rule-chip">MA/RSI → manual perps</span>
           </div>
         </Reveal>
       </div>
@@ -342,7 +375,7 @@ function FinalCta() {
         </p>
         <div className="landing-hero-actions justify-center">
           <Link to="/app/new" className="landing-btn-primary">
-            Create automation
+            New rule
           </Link>
           <Link to="/app" className="landing-btn-ghost">
             View dashboard
@@ -375,7 +408,7 @@ function SiteFooter() {
                 <Link to="/app/vault">Vault</Link>
               </li>
               <li>
-                <Link to="/app/new">New automation</Link>
+                <Link to="/app/new">New rule</Link>
               </li>
             </ul>
           </div>

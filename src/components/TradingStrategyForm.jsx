@@ -132,7 +132,7 @@ export function TradingStrategyForm({ onSave, onCancel, saving }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-[16px] font-semibold tracking-tight text-ink">
-            New screener strategy
+            New spot strategy
           </h2>
           <p className="mt-1 text-[13px] text-muted">
             Pick a Discover list, scan filters, then buy → take profits → stop.

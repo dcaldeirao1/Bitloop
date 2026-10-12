@@ -4,6 +4,9 @@ import { ActivityList } from '../components/ActivityList'
 import { AutomationCard } from '../components/AutomationFlow'
 import { DashShell, normalizeSection } from '../components/DashShell'
 import { NetworkBanner } from '../components/NetworkBanner'
+import { PerpsDesk } from '../components/PerpsDesk'
+import { EnvBadge } from '../components/RuleStepsHeader'
+import { RuleFlowSummary } from '../components/RuleFlowSummary'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { TradingDiscovery } from '../components/TradingDiscovery'
 import {
@@ -11,7 +14,6 @@ import {
   TradingSandbox,
 } from '../components/TradingSandbox'
 import { TradingStrategyForm } from '../components/TradingStrategyForm'
-import { PerpsDesk } from '../components/PerpsDesk'
 import { VaultCommandCenter } from '../components/VaultCommandCenter'
 import { WalletButton } from '../components/WalletButton'
 import { useWallet } from '../context/WalletContext'
@@ -27,8 +29,14 @@ import {
 } from '../lib/automations'
 import { getAutomationFunding } from '../lib/automationBlocks'
 import { formatUsdCompact } from '../lib/dexscreener'
-import { fetchFilteredStrategyMatches } from '../lib/strategyUniverse'
 import { fetchVaultHistory } from '../lib/history'
+import {
+  RULE_CATEGORY,
+  getCategoryMeta,
+  isSpotStrategyRule,
+} from '../lib/ruleCategories'
+import { fetchFilteredStrategyMatches } from '../lib/strategyUniverse'
+import { buildUnifiedActivity } from '../lib/unifiedActivity'
 import {
   getVaultAddress,
   getVaultBalances,
@@ -50,7 +58,7 @@ function isDcaRule(rule) {
 }
 
 function isStrategyRule(rule) {
-  return rule.action?.type === 'trading_strategy' || rule.trigger?.type === 'screener'
+  return isSpotStrategyRule(rule)
 }
 
 function isAutomationLibraryRule(rule) {
@@ -77,7 +85,7 @@ export function Dashboard() {
   const [historyByRule, setHistoryByRule] = useState({})
   const [historyLoading, setHistoryLoading] = useState(null)
   const [section, setSection] = useState(() => normalizeSection(params.get('section')))
-  const [trenchesTab, setTrenchesTab] = useState('discover')
+  const [spotTab, setSpotTab] = useState('discover')
   const [showStrategyForm, setShowStrategyForm] = useState(false)
   const [pendingStrategy, setPendingStrategy] = useState(null)
   const [pendingRuleId, setPendingRuleId] = useState(null)
@@ -117,6 +125,21 @@ export function Dashboard() {
   useEffect(() => {
     setSection(normalizeSection(params.get('section')))
   }, [params])
+
+  // Open Test step after creating a spot rule from /app/new?type=spot
+  useEffect(() => {
+    const launchId = params.get('launch')
+    if (!launchId || !rules.length) return
+    const rule = rules.find((r) => r.id === launchId)
+    if (!rule || !isStrategyRule(rule)) return
+    setSection('spot')
+    setSpotTab('test')
+    setSandboxFocusId(rule.id)
+    setPendingRuleId(rule.id)
+    setShowStrategyLaunch(false)
+    setShowStrategyForm(false)
+    setParams({ section: 'spot' })
+  }, [params, rules, setParams])
 
   useEffect(() => {
     if (!address) {
@@ -187,13 +210,13 @@ export function Dashboard() {
   }, [vault, section])
 
   const counts = useMemo(() => {
-    let automations = 0
-    let trenches = 0
+    let savePay = 0
+    let spot = 0
     for (const rule of rules) {
-      if (isStrategyRule(rule)) trenches += 1
-      else automations += 1
+      if (isStrategyRule(rule)) spot += 1
+      else savePay += 1
     }
-    return { automations, trenches, perps: 0 }
+    return { savePay, spot, perps: 0 }
   }, [rules])
 
   const enabledRules = useMemo(() => rules.filter((r) => r.enabled), [rules])
@@ -208,10 +231,14 @@ export function Dashboard() {
     [enabledRules, balances],
   )
   const activeCount = activeRules.length
-  const overviewRules = useMemo(
-    () => [...activeRules, ...attentionRules],
-    [activeRules, attentionRules],
-  )
+  const overviewRules = useMemo(() => {
+    // All rules across categories — paused included — for one product list
+    return [...rules].sort((a, b) => {
+      const ae = a.enabled ? 0 : 1
+      const be = b.enabled ? 0 : 1
+      return ae - be
+    })
+  }, [rules])
 
   const libraryRules = useMemo(
     () => rules.filter(isAutomationLibraryRule),
@@ -220,22 +247,31 @@ export function Dashboard() {
 
   const strategyRules = useMemo(() => rules.filter(isStrategyRule), [rules])
 
+  const unifiedActivity = useMemo(
+    () =>
+      buildUnifiedActivity({
+        vaultItems: vaultActivity,
+        strategyRules,
+      }),
+    [vaultActivity, strategyRules],
+  )
+
   const sectionMeta = {
     overview: {
       title: 'Overview',
-      blurb: 'Vault at the center. Money flows through connected automations.',
+      blurb: 'Rules that run your money — automations, spot, and perps in one place.',
     },
-    automations: {
-      title: 'Automations',
-      blurb: 'Your rule library — splits, schedules, and DCA.',
+    'save-pay': {
+      title: 'My Automations',
+      blurb: 'Splits, schedules, DCA, and bridges from your Sepolia vault.',
     },
-    trenches: {
-      title: 'Trenches',
-      blurb: 'Discover tokens and paper-track strategies (mock bankroll, live prices).',
+    spot: {
+      title: 'Spot strategies',
+      blurb: 'Screen tokens, test with paper funds, then run a live paper scan.',
     },
     perps: {
-      title: 'Perps',
-      blurb: 'Hyperliquid testnet — agent connect and one-shot longs with TP/SL.',
+      title: 'Perps strategies',
+      blurb: 'Backtest a strategy, then deploy it on Hyperliquid with real funds.',
     },
     settings: {
       title: 'Settings',
@@ -436,7 +472,7 @@ export function Dashboard() {
       setPendingRuleId(null)
       setShowStrategyLaunch(false)
       setShowStrategyForm(false)
-      setTrenchesTab(enabled ? 'strategies' : 'sandbox')
+      setSpotTab(enabled ? 'strategies' : 'test')
       return saved
     } catch (err) {
       setActionError(err?.message || 'Could not save strategy')
@@ -458,7 +494,7 @@ export function Dashboard() {
         setPendingStrategy(null)
         setPendingRuleId(null)
         setShowStrategyLaunch(false)
-        setTrenchesTab('strategies')
+        setSpotTab('strategies')
       } catch (err) {
         setActionError(err?.message || 'Could not deploy strategy')
       } finally {
@@ -511,7 +547,7 @@ export function Dashboard() {
       try {
         const updated = await updateAutomation(address, rule.id, { enabled: true })
         setRules((prev) => prev.map((r) => (r.id === rule.id ? updated : r)))
-        setTrenchesTab('strategies')
+        setSpotTab('strategies')
       } catch (err) {
         setActionError(err?.shortMessage || err?.message || 'Deploy failed')
       } finally {
@@ -643,9 +679,9 @@ export function Dashboard() {
                   setShowStrategyLaunch(false)
                   setShowStrategyForm(false)
                   setSandboxFocusId(rule.id)
-                  setSection('trenches')
-                  setTrenchesTab('sandbox')
-                  setParams({ section: 'trenches' })
+                  setSection('spot')
+                  setSpotTab('test')
+                  setParams({ section: 'spot' })
                 }
               : null
           }
@@ -710,7 +746,7 @@ export function Dashboard() {
           <div className="w-full max-w-md text-center animate-in">
             <h1 className="dash-title">Connect your wallet</h1>
             <p className="mt-3 text-[15px] leading-relaxed text-muted">
-              Non-custodial vault automations. Keys stay in MetaMask.
+              Rules that save, pay, and trade for you. Keys stay in MetaMask.
             </p>
             {!hasExtension && (
               <p className="alert-error mt-5">
@@ -748,32 +784,22 @@ export function Dashboard() {
         <PerpsDesk address={address} />
       ) : (
         <>
-          {section !== 'overview' && (
+          {section !== 'overview' && section !== 'perps' && (
             <div className="dash-header">
               <div>
                 <h1 className="dash-title">{meta.title}</h1>
                 <p className="dash-subtitle">{meta.blurb}</p>
               </div>
-              {section === 'automations' ? (
-                <Link to="/app/new" className="btn-primary">
-                  Create automation
+              {section === 'save-pay' ? (
+                <Link to="/app/new?type=save-pay" className="btn-primary">
+                  New rule
                 </Link>
-              ) : section === 'trenches' &&
-                trenchesTab !== 'sandbox' &&
+              ) : section === 'spot' &&
+                spotTab !== 'test' &&
                 !showStrategyLaunch ? (
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={() => {
-                    setTrenchesTab('strategies')
-                    setShowStrategyLaunch(false)
-                    setPendingStrategy(null)
-                    setPendingRuleId(null)
-                    setShowStrategyForm(true)
-                  }}
-                >
-                  New strategy
-                </button>
+                <Link to="/app/new?type=spot" className="btn-primary">
+                  New rule
+                </Link>
               ) : null}
             </div>
           )}
@@ -807,9 +833,9 @@ export function Dashboard() {
 
               <div className="os-section">
                 <div className="os-section-header">
-                  <h3 className="os-section-title">Connected automations</h3>
+                  <h3 className="os-section-title">Your rules</h3>
                   <span className="os-section-meta">
-                    {activeCount} running
+                    {activeCount} active
                     {attentionRules.length > 0
                       ? ` · ${attentionRules.length} need attention`
                       : ''}
@@ -822,12 +848,13 @@ export function Dashboard() {
                   <div className="dash-empty text-[13px] text-muted">Loading…</div>
                 ) : overviewRules.length === 0 ? (
                   <div className="dash-empty animate-in">
-                    <p className="text-[15px] font-medium text-ink">Nothing running yet</p>
+                    <p className="text-[15px] font-medium text-ink">No rules yet</p>
                     <p className="mx-auto mt-2 max-w-md text-[13px] text-muted">
-                      Create a split, schedule, or DCA — it will appear here when live.
+                      Build a rule to save, pay, or trade — test it before it touches
+                      real funds.
                     </p>
                     <Link to="/app/new" className="btn-primary mt-5 inline-flex">
-                      Create automation
+                      New rule
                     </Link>
                   </div>
                 ) : (
@@ -841,7 +868,7 @@ export function Dashboard() {
 
               <div className="os-section">
                 <div className="os-section-header">
-                  <h3 className="os-section-title">Recent activity</h3>
+                  <h3 className="os-section-title">Activity</h3>
                   <Link
                     to="/app/vault"
                     className="text-[12px] font-medium text-teal hover:underline"
@@ -854,9 +881,9 @@ export function Dashboard() {
                     <p className="text-[13px] text-muted">Loading…</p>
                   ) : (
                     <ActivityList
-                      items={vaultActivity}
-                      limit={10}
-                      emptyText="No vault transactions yet."
+                      items={unifiedActivity}
+                      limit={12}
+                      emptyText="No rule activity yet."
                     />
                   )}
                 </div>
@@ -864,11 +891,25 @@ export function Dashboard() {
             </>
           )}
 
-          {section === 'automations' && (
+          {section === 'save-pay' && (
             <div className="w-full space-y-3">
+              <RuleFlowSummary
+                triggerTitle="When"
+                triggerBody={getCategoryMeta(RULE_CATEGORY.SAVE_PAY).triggerSummary}
+                actionTitle="Then"
+                actionBody={getCategoryMeta(RULE_CATEGORY.SAVE_PAY).actionSummary}
+                envBadge={
+                  <EnvBadge
+                    env={{
+                      label: getCategoryMeta(RULE_CATEGORY.SAVE_PAY).envLabel,
+                      tone: getCategoryMeta(RULE_CATEGORY.SAVE_PAY).envTone,
+                    }}
+                  />
+                }
+              />
               <div className="dash-stats mb-4">
                 <div className="dash-stat glass-panel">
-                  <p className="dash-stat-label">Library</p>
+                  <p className="dash-stat-label">Rules</p>
                   <p className="dash-stat-value">{libraryRules.length}</p>
                 </div>
                 <div className="dash-stat glass-panel">
@@ -902,8 +943,8 @@ export function Dashboard() {
                   <p className="mx-auto mt-2 max-w-md text-[13px] text-muted">
                     Build a split, scheduled transfer, or DCA into your vault.
                   </p>
-                  <Link to="/app/new" className="btn-primary mt-5 inline-flex">
-                    Create automation
+                  <Link to="/app/new?type=save-pay" className="btn-primary mt-5 inline-flex">
+                    New rule
                   </Link>
                 </div>
               )}
@@ -913,24 +954,38 @@ export function Dashboard() {
             </div>
           )}
 
-          {section === 'trenches' && (
+          {section === 'spot' && (
             <>
-              <div className="dash-segment">
+              <RuleFlowSummary
+                triggerTitle="Filters"
+                triggerBody={getCategoryMeta(RULE_CATEGORY.SPOT).triggerSummary}
+                actionTitle="Trade"
+                actionBody={getCategoryMeta(RULE_CATEGORY.SPOT).actionSummary}
+                envBadge={
+                  <EnvBadge
+                    env={{
+                      label: getCategoryMeta(RULE_CATEGORY.SPOT).envLabel,
+                      tone: getCategoryMeta(RULE_CATEGORY.SPOT).envTone,
+                    }}
+                  />
+                }
+              />
+              <div className="dash-segment mt-4">
                 {[
                   { id: 'discover', label: 'Discover' },
                   { id: 'strategies', label: 'Strategies' },
-                  { id: 'sandbox', label: 'Sandbox' },
+                  { id: 'test', label: 'Test' },
                 ].map((tab) => (
                   <button
                     key={tab.id}
                     type="button"
                     onClick={() => {
-                      setTrenchesTab(tab.id)
+                      setSpotTab(tab.id)
                       setShowStrategyForm(false)
                       setShowStrategyLaunch(false)
                       setExpandedId(null)
                     }}
-                    className={trenchesTab === tab.id ? 'is-active' : ''}
+                    className={spotTab === tab.id ? 'is-active' : ''}
                   >
                     {tab.label}
                   </button>
@@ -959,18 +1014,18 @@ export function Dashboard() {
                     onTest={() => {
                       setShowStrategyLaunch(false)
                       if (pendingRuleId) setSandboxFocusId(pendingRuleId)
-                      setTrenchesTab('sandbox')
+                      setSpotTab('test')
                     }}
                     onDeploy={() => void deployPendingStrategy()}
                   />
                 </div>
               )}
 
-              {trenchesTab === 'discover' &&
+              {spotTab === 'discover' &&
                 !showStrategyForm &&
                 !showStrategyLaunch && <TradingDiscovery />}
 
-              {trenchesTab === 'sandbox' &&
+              {spotTab === 'test' &&
                 !showStrategyForm &&
                 !showStrategyLaunch && (
                   <TradingSandbox
@@ -993,7 +1048,7 @@ export function Dashboard() {
                   />
                 )}
 
-              {trenchesTab === 'strategies' &&
+              {spotTab === 'strategies' &&
                 !showStrategyForm &&
                 !showStrategyLaunch && (
                 <div className="w-full space-y-3">
@@ -1004,12 +1059,15 @@ export function Dashboard() {
                   {!loadingRules && strategyRules.length === 0 && (
                     <div className="dash-empty animate-in">
                       <p className="text-[15px] font-medium text-ink">
-                        No screener strategies
+                        No spot strategies
                       </p>
                       <p className="mx-auto mt-2 max-w-md text-[13px] text-muted">
-                        Set volume, liquidity, and risk rules — we’ll surface matching tokens.
-                        Use New strategy above to get started.
+                        Set volume, liquidity, and risk rules — then test with paper
+                        funds before enabling a live paper scan.
                       </p>
+                      <Link to="/app/new?type=spot" className="btn-primary mt-5 inline-flex">
+                        New rule
+                      </Link>
                     </div>
                   )}
 

@@ -233,7 +233,7 @@ export function VaultCommandCenter({
             </p>
           </div>
           <Link to="/app/new" className="btn-primary money-os-chrome-cta">
-            Create automation
+            New rule
           </Link>
         </div>
 
@@ -373,12 +373,12 @@ export function VaultCommandCenter({
         })}
 
         {loadingRules ? (
-          <p className="money-os-stage-note">Loading automations…</p>
+          <p className="money-os-stage-note">Loading rules…</p>
         ) : null}
 
         {!loadingRules && count === 0 ? (
           <p className="money-os-stage-note">
-            No automations connected — create one to see money flow here.
+            No rules connected — create one to see money flow here.
           </p>
         ) : null}
 

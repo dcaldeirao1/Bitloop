@@ -1,27 +1,41 @@
 import { useLocation, useNavigate } from 'react-router-dom'
 import { AppHeader } from './AppHeader'
 
-/** Primary app sections — single source of truth for sidebar + mobile chips. */
+/**
+ * Flat primary nav — no group dividers.
+ * Legacy section ids remain in SECTION_ALIASES for old links.
+ */
 export const APP_NAV = [
   { id: 'overview', label: 'Overview' },
-  { id: 'automations', label: 'Automations', countKey: 'automations' },
-  { id: 'trenches', label: 'Trenches', countKey: 'trenches' },
-  { id: 'perps', label: 'Perps' },
+  { id: 'save-pay', label: 'My Automations', countKey: 'savePay' },
+  { id: 'spot', label: 'Spot strategies', countKey: 'spot' },
+  { id: 'perps', label: 'Perps strategies' },
   { id: 'settings', label: 'Settings', footer: true },
+]
+
+/** Flat list of selectable section ids. */
+export const APP_SECTIONS = [
+  'overview',
+  'save-pay',
+  'spot',
+  'perps',
+  'settings',
 ]
 
 /** Legacy query params → canonical section ids. */
 export const SECTION_ALIASES = {
   home: 'overview',
-  basic: 'automations',
-  trading: 'trenches',
+  basic: 'save-pay',
+  automations: 'save-pay',
+  trading: 'spot',
+  trenches: 'spot',
   'auto-perps': 'perps',
 }
 
 export function normalizeSection(raw) {
   if (!raw) return 'overview'
   if (SECTION_ALIASES[raw]) return SECTION_ALIASES[raw]
-  if (APP_NAV.some((n) => n.id === raw)) return raw
+  if (APP_SECTIONS.includes(raw)) return raw
   return 'overview'
 }
 
@@ -39,6 +53,7 @@ export function DashShell({
   const navigate = useNavigate()
   const onDash = location.pathname === '/app' || location.pathname === '/app/'
   const onVault = location.pathname.startsWith('/app/vault')
+  const onNew = location.pathname.startsWith('/app/new')
   const active = normalizeSection(section)
 
   const go = (id) => {
@@ -60,9 +75,7 @@ export function DashShell({
         className={`dash-nav-item ${isActive ? 'is-active' : ''}`}
       >
         <span>{item.label}</span>
-        {item.soon ? (
-          <span className="dash-nav-soon">Soon</span>
-        ) : count != null ? (
+        {count != null ? (
           <span className="dash-nav-count">{count || 0}</span>
         ) : null}
       </button>
@@ -82,7 +95,7 @@ export function DashShell({
               className={`dash-chip ${onDash && active === item.id ? 'is-active' : ''}`}
             >
               {item.label}
-              {!item.soon && item.countKey && autoCounts[item.countKey]
+              {item.countKey && autoCounts[item.countKey]
                 ? ` ${autoCounts[item.countKey]}`
                 : ''}
             </button>
@@ -92,10 +105,14 @@ export function DashShell({
               Vault
             </button>
           ) : null}
+          {onNew ? (
+            <button type="button" className="dash-chip is-active" disabled>
+              New rule
+            </button>
+          ) : null}
         </div>
 
         <aside className="dash-sidebar">
-          <p className="dash-nav-group">Workspace</p>
           <nav className="flex flex-1 flex-col gap-0.5">{primary.map(renderItem)}</nav>
 
           <div className="mt-auto border-t border-line pt-2">

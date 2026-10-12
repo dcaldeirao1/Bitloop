@@ -235,6 +235,71 @@ function shortFiltersOk(i, candles, ind, strategy) {
   return checks.length > 0 && checks.every(Boolean)
 }
 
+/**
+ * Latest live signal for the last candle (same rules as the backtest engine).
+ * Used when deploying a backtested strategy with real funds.
+ */
+export function getLatestPerpsSignal(candles, strategyInput = {}) {
+  const strategy = normalizeStrategy({ ...DEFAULT_PERPS_STRATEGY, ...strategyInput })
+  if (!candles?.length) {
+    return { side: null, reason: 'No candles', strategy }
+  }
+  const ind = computeIndicators(candles, strategy)
+  const i = candles.length - 1
+  const sideMode = strategy.sideMode || 'both'
+  const allowLong = sideMode === 'long' || sideMode === 'both'
+  const allowShort = sideMode === 'short' || sideMode === 'both'
+
+  if (allowLong && longEntryAt(i, candles, ind, strategy)) {
+    return {
+      side: 'long',
+      reason: 'Live long signal on latest bar',
+      strategy,
+      price: candles[i].c,
+      time: candles[i].t,
+    }
+  }
+  if (allowShort && shortEntryAt(i, candles, ind, strategy)) {
+    return {
+      side: 'short',
+      reason: 'Live short signal on latest bar',
+      strategy,
+      price: candles[i].c,
+      time: candles[i].t,
+    }
+  }
+
+  // Fallback: bias from sideMode so deploy is still possible after a successful backtest
+  if (sideMode === 'long') {
+    return {
+      side: 'long',
+      reason: 'No live signal — using long bias from strategy',
+      strategy,
+      price: candles[i].c,
+      time: candles[i].t,
+      soft: true,
+    }
+  }
+  if (sideMode === 'short') {
+    return {
+      side: 'short',
+      reason: 'No live signal — using short bias from strategy',
+      strategy,
+      price: candles[i].c,
+      time: candles[i].t,
+      soft: true,
+    }
+  }
+  return {
+    side: 'long',
+    reason: 'No live signal — defaulting to long (confirm before deploy)',
+    strategy,
+    price: candles[i].c,
+    time: candles[i].t,
+    soft: true,
+  }
+}
+
 function longEntryAt(i, candles, ind, strategy) {
   if (!longFiltersOk(i, candles, ind, strategy)) return false
   // Cross signals are already a single-bar edge; otherwise rising edge of filters

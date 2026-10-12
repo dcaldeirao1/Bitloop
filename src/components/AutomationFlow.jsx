@@ -4,6 +4,8 @@ import {
   getAutomationSchedule,
   getAutomationStatus,
 } from '../lib/automationBlocks'
+import { getRuleCategoryId, getRuleEnv } from '../lib/ruleCategories'
+import { CategoryBadge, EnvBadge } from './RuleStepsHeader'
 
 function FlowWire({ tone = 'teal' }) {
   return (
@@ -112,10 +114,12 @@ export function AutomationCard({
     >
       <div className="automation-card-top">
         <div className="automation-card-lead">
+          <CategoryBadge categoryId={getRuleCategoryId(rule)} />
           <span className={`status-pill ${status.tone}`}>
             <span className="status-dot" aria-hidden="true" />
             {status.label}
           </span>
+          <EnvBadge env={getRuleEnv(rule)} />
           <div className="automation-schedule" title="Execution timing">
             <span>
               <em>Last</em> {schedule.lastLabel}
@@ -134,7 +138,7 @@ export function AutomationCard({
           </button>
           {onTestSandbox ? (
             <button type="button" className="flow-action" onClick={onTestSandbox}>
-              Test in sandbox
+              Test with paper funds
             </button>
           ) : null}
           <button

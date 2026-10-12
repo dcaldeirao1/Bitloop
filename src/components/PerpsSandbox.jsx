@@ -12,6 +12,7 @@ import {
   describePerpsStrategy,
   fetchCandles,
   formatTs,
+  getLatestPerpsSignal,
   runPerpsBacktest,
 } from '../lib/perpsSandbox'
 import { PerpsBacktestChart } from './PerpsBacktestChart'
@@ -58,9 +59,13 @@ function EquitySpark({ equity }) {
 }
 
 /**
- * Hyperliquid perps indicator sandbox — historical backtest (MA / RSI / volume).
+ * Hyperliquid perps backtest — step 1 before deploying with real funds.
+ * `onContinueToDeploy(payload)` receives { strategy, signal, result, market }.
  */
-export function PerpsSandbox({ markets: marketsProp = null }) {
+export function PerpsSandbox({
+  markets: marketsProp = null,
+  onContinueToDeploy = null,
+}) {
   const [markets, setMarkets] = useState(marketsProp?.length ? marketsProp : PERP_MARKETS)
   const [form, setForm] = useState(() => ({ ...DEFAULT_PERPS_STRATEGY }))
   const [marketQuery, setMarketQuery] = useState('')
@@ -68,6 +73,7 @@ export function PerpsSandbox({ markets: marketsProp = null }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [result, setResult] = useState(null)
+  const [liveSignal, setLiveSignal] = useState(null)
   const marketBoxRef = useRef(null)
 
   useEffect(() => {
@@ -118,6 +124,7 @@ export function PerpsSandbox({ markets: marketsProp = null }) {
     setBusy(true)
     setError(null)
     setResult(null)
+    setLiveSignal(null)
     try {
       const end = Date.now()
       const start = end - Math.max(1, Number(form.lookbackDays) || 30) * 24 * 60 * 60_000
@@ -133,12 +140,26 @@ export function PerpsSandbox({ markets: marketsProp = null }) {
         )
       }
       const report = runPerpsBacktest(candles, form)
+      const signal = getLatestPerpsSignal(candles, form)
       setResult(report)
+      setLiveSignal(signal)
     } catch (err) {
       setError(hlErrorMessage(err, 'Backtest failed'))
     } finally {
       setBusy(false)
     }
+  }
+
+  const continueToDeploy = () => {
+    if (!result || !onContinueToDeploy) return
+    const signal =
+      liveSignal || getLatestPerpsSignal(result.candles, result.strategy || form)
+    onContinueToDeploy({
+      strategy: { ...form, ...(result.strategy || {}) },
+      signal,
+      result,
+      market,
+    })
   }
 
   const m = result?.metrics
@@ -148,10 +169,12 @@ export function PerpsSandbox({ markets: marketsProp = null }) {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-base font-semibold tracking-tight text-ink">Strategy sandbox</h2>
+        <h2 className="text-base font-semibold tracking-tight text-ink">
+          1. Backtest your strategy
+        </h2>
         <p className="mt-1 max-w-2xl text-sm text-muted">
-          Backtest long/short perps entries from moving-average crosses, RSI levels, and volume
-          confirmation on Hyperliquid candles. Paper results only — no orders are sent.
+          Tune MA / RSI / volume signals on Hyperliquid candles. Review results, then deploy
+          the same parameters with real funds on Hyperliquid.
         </p>
       </div>
 
@@ -593,6 +616,43 @@ export function PerpsSandbox({ markets: marketsProp = null }) {
               </div>
             )}
           </div>
+
+          {onContinueToDeploy ? (
+            <div className="rounded-2xl border border-teal/30 bg-teal/5 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-teal">
+                    Next step
+                  </p>
+                  <h3 className="mt-1 text-base font-semibold text-ink">
+                    2. Deploy on Hyperliquid
+                  </h3>
+                  <p className="mt-1 text-sm text-muted">
+                    Same market, leverage, and TP/SL as this backtest. Opens a live position
+                    with your Hyperliquid balance (testnet when configured).
+                  </p>
+                  {liveSignal ? (
+                    <p className="mt-2 text-[13px] text-ink-soft">
+                      Deploy side:{' '}
+                      <span className="font-semibold capitalize text-ink">
+                        {liveSignal.side}
+                      </span>
+                      {' · '}
+                      {liveSignal.reason}
+                    </p>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={!result.trades.length && !liveSignal?.side}
+                  onClick={continueToDeploy}
+                >
+                  Deploy this strategy
+                </button>
+              </div>
+            </div>
+          ) : null}
         </section>
       ) : null}
     </div>
