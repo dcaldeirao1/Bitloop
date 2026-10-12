@@ -54,12 +54,12 @@ const ACTION_GROUPS = [
   },
   {
     id: 'bridge',
-    label: 'Bridge',
+    label: 'Bridge (experimental)',
     items: [
       {
         id: 'bridge_relay',
         title: 'Relay bridge',
-        hint: 'Any token → any token',
+        hint: 'Mainnet L2s — not Sepolia vault',
       },
     ],
   },

@@ -314,8 +314,8 @@ export function PerpsDesk({ address }) {
             />
           </div>
           <p className="dash-subtitle mt-1 max-w-xl">
-            Backtest first, then deploy the same strategy on Hyperliquid with real
-            funds. You confirm every live order.
+            Backtest first, then deploy the same strategy on Hyperliquid testnet.
+            You confirm every live order.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

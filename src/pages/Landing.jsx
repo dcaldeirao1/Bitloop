@@ -5,6 +5,7 @@ import { Reveal } from '../components/landing/Reveal'
 import {
   DemoActivity,
   DemoBuilder,
+  DemoSpot,
   DemoVault,
 } from '../components/landing/ProductDemos'
 import { ThemeToggle } from '../components/ThemeToggle'
@@ -18,17 +19,17 @@ const STEPS = [
   {
     n: '02',
     title: 'Action',
-    body: 'Define what happens — split, send, DCA, paper buy, or manual perps trade.',
+    body: 'Define what happens — split, send, DCA, paper buy, or a perps order.',
   },
   {
     n: '03',
     title: 'Test',
-    body: 'Preview on Sepolia, paper-trade spot, or backtest perps before real risk.',
+    body: 'Preview vault rules, paper-trade spot, or backtest perps before you deploy.',
   },
   {
     n: '04',
     title: 'Deploy',
-    body: 'Go live on-chain, run a paper scan, or trade Hyperliquid testnet — honestly labeled.',
+    body: 'Ship on-chain across supported networks, run a paper scan, or place a perps order.',
   },
 ]
 
@@ -39,15 +40,15 @@ const FAQS = [
   },
   {
     q: 'Does automation work when I close the browser?',
-    a: 'Yes, for vault rules on Sepolia. A keeper watches your vault and calls processToken, executeRecurring, or executeDca when conditions are met.',
+    a: 'Yes, for vault rules — while the keeper process is running. It watches your vault and calls processToken, executeRecurring, or executeDca when conditions are met.',
   },
   {
     q: 'Who pays gas for automated transactions?',
     a: 'The keeper wallet pays gas for splits, scheduled sends, and DCA. You pay gas when you deploy the vault, configure rules, deposit, or withdraw.',
   },
   {
-    q: 'Which network is supported today?',
-    a: 'Sepolia testnet with USDC. The app shows your active MetaMask network. Mainnet support is planned.',
+    q: 'Which networks are supported?',
+    a: 'Ethereum, Arbitrum, Base, and Robinhood Chain — switch networks in the app header. Spot strategies are paper. Perps deploy on Hyperliquid.',
   },
   {
     q: 'Where are my automations stored?',
@@ -61,11 +62,48 @@ const FAQS = [
 
 const PROOF = [
   'Rules that run your money',
-  'My Automations on Sepolia',
+  'Ethereum · Arbitrum · Base · Robinhood',
   'Spot strategies (paper)',
   'Perps: backtest then deploy',
   'Test before deploy',
   'Non-custodial',
+]
+
+const PLANS = [
+  {
+    id: 'free',
+    name: 'Free',
+    blurb: 'Get started',
+    price: '$0',
+    period: null,
+    cta: 'Get started',
+    ctaTo: '/app',
+    featured: false,
+    soon: false,
+    features: [
+      'Unlimited automations',
+      'USDC split & scheduled sends',
+      'Vault + activity history',
+      'Keeper execution',
+    ],
+  },
+  {
+    id: 'pro',
+    name: 'Pro',
+    blurb: 'Multi-chain & teams',
+    price: '$49',
+    period: '/ mo',
+    cta: 'Join waitlist',
+    ctaTo: null,
+    featured: true,
+    soon: true,
+    features: [
+      'Ethereum, Arb, Base & Robinhood',
+      'Priority keeper',
+      'Advanced strategy types',
+      'Email alerts & API',
+    ],
+  },
 ]
 
 export function Landing() {
@@ -76,7 +114,7 @@ export function Landing() {
       <ProofMarquee />
       <FeatureStory />
       <HowItWorks />
-      <FreePanel />
+      <Pricing />
       <Faq />
       <FinalCta />
       <SiteFooter />
@@ -92,7 +130,7 @@ function SiteNav() {
         <nav className="landing-nav-links">
           <a href="#product">Product</a>
           <a href="#how">How it works</a>
-          <a href="#access">Access</a>
+          <a href="#pricing">Pricing</a>
           <a href="#faq">FAQ</a>
         </nav>
         <div className="flex items-center gap-2">
@@ -116,19 +154,16 @@ function Hero() {
       </div>
       <div className="landing-grid-bg landing-hero-grid" aria-hidden="true" />
       <div className="landing-hero-noise" aria-hidden="true" />
+      <div className="landing-hero-wash" aria-hidden="true" />
 
       <div className="landing-hero-inner">
         <div className="landing-hero-copy">
-          <p className="landing-hero-kicker animate-in">
-            <span className="landing-hero-kicker-dot" />
-            Rules · Test · Deploy
-          </p>
           <h1 className="landing-hero-headline animate-in">
             Your money, on autopilot.
           </h1>
           <p className="landing-hero-sub animate-in-late">
-            Build rules that save, pay, and trade for you. Test every rule before
-            it touches real funds.
+            Rules that save, pay, and trade for you — Trigger → Action → Test →
+            Deploy on Ethereum, Arbitrum, Base, and Robinhood Chain.
           </p>
           <div className="landing-hero-actions animate-in-late">
             <Link to="/app" className="landing-btn-primary">
@@ -138,11 +173,6 @@ function Hero() {
               See the product
             </a>
           </div>
-          <ul className="landing-hero-trust animate-in-late">
-            <li>My Automations</li>
-            <li>Spot strategies</li>
-            <li>Perps strategies</li>
-          </ul>
         </div>
 
         <div className="landing-hero-stage animate-in-late">
@@ -189,11 +219,11 @@ function FeatureStory() {
               Splits, schedules, and DCA from your vault
             </h2>
             <p className="landing-section-body">
-              On-chain rules on Sepolia. Preview, then deploy to a vault you own.
-              Keeper runs while you are offline.
+              On-chain rules on the network you choose. Preview, then deploy to a
+              vault you own. Keeper runs while you are offline.
             </p>
             <ul className="landing-checklist">
-              <li>Environment: On-chain (Sepolia)</li>
+              <li>Ethereum · Arbitrum · Base · Robinhood</li>
               <li>Deploy to vault after preview</li>
               <li>Confirmed activity with explorer links</li>
             </ul>
@@ -226,7 +256,7 @@ function FeatureStory() {
             </Link>
           </Reveal>
           <Reveal className="landing-feature-visual" delay={60} threshold={0.05}>
-            <DemoVault />
+            <DemoSpot />
           </Reveal>
         </article>
 
@@ -234,7 +264,7 @@ function FeatureStory() {
           <Reveal className="landing-feature-copy">
             <p className="landing-eyebrow">Perps strategies</p>
             <h2 className="landing-section-title">
-              Backtest first. Deploy with real funds.
+              Backtest first. Deploy on Hyperliquid.
             </h2>
             <p className="landing-section-body">
               Tune MA / RSI signals on history, then deploy the same parameters on
@@ -243,7 +273,7 @@ function FeatureStory() {
             <ul className="landing-checklist">
               <li>Environment: Hyperliquid</li>
               <li>Backtest first</li>
-              <li>Deploy strategy with real funds</li>
+              <li>Deploy strategy</li>
             </ul>
             <Link to="/app/new?type=perps" className="landing-btn-primary mt-8 inline-flex">
               New perps rule
@@ -266,7 +296,7 @@ function HowItWorks() {
           <p className="landing-eyebrow">How it works</p>
           <h2 className="landing-section-title">Trigger, Action, Test, Deploy</h2>
           <p className="landing-section-body mx-auto mt-3 max-w-xl">
-            One flow for My Automations, Spot, and Perps — with honest environments
+            One flow for My Automations, Spot, and Perps — with clear environments
             for each.
           </p>
         </Reveal>
@@ -293,30 +323,57 @@ function HowItWorks() {
   )
 }
 
-function FreePanel() {
+function Pricing() {
   return (
-    <section id="access" className="landing-section">
+    <section id="pricing" className="landing-section">
       <div className="landing-section-inner">
-        <Reveal className="landing-access">
-          <div className="landing-access-copy">
-            <p className="landing-eyebrow">Access</p>
-            <h2 className="landing-section-title">Free on Sepolia testnet</h2>
-            <p className="landing-section-body mt-3">
-              Build and run vault automations at no product cost. You only need
-              Sepolia ETH for gas and test USDC to fund your vault.
-            </p>
-            <Link to="/app" className="landing-btn-primary mt-8 inline-flex">
-              Get started
-            </Link>
-            <p className="mt-4 text-[12px] text-muted">Mainnet coming later.</p>
-          </div>
-          <ul className="landing-access-list">
-            <li>Unlimited automations on your vault</li>
-            <li>USDC splits, schedules, and DCA</li>
-            <li>Keeper execution while you are offline</li>
-            <li>Confirmed on-chain activity history</li>
-          </ul>
+        <Reveal className="landing-section-head">
+          <p className="landing-eyebrow">Pricing</p>
+          <h2 className="landing-section-title">Start free. Scale when ready.</h2>
+          <p className="landing-section-body mx-auto mt-3 max-w-xl">
+            Build and run automations at no cost. Pro unlocks multi-chain scale,
+            priority keeper, and team features.
+          </p>
         </Reveal>
+
+        <div className="landing-pricing-grid">
+          {PLANS.map((plan, i) => (
+            <Reveal key={plan.id} delay={i * 80} className={`landing-plan ${plan.featured ? 'is-featured' : ''}`}>
+              {plan.soon ? (
+                <span className="landing-plan-badge">Soon</span>
+              ) : null}
+              <h3 className="landing-plan-name">{plan.name}</h3>
+              <p className="landing-plan-blurb">{plan.blurb}</p>
+              <p className="landing-plan-price">
+                {plan.price}
+                {plan.period ? (
+                  <span className="landing-plan-period">{plan.period}</span>
+                ) : null}
+              </p>
+              <ul className="landing-plan-features">
+                {plan.features.map((f) => (
+                  <li key={f}>
+                    <span aria-hidden="true">✓</span>
+                    {f}
+                  </li>
+                ))}
+              </ul>
+              {plan.ctaTo ? (
+                <Link to={plan.ctaTo} className="landing-btn-primary landing-plan-cta">
+                  {plan.cta}
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  className="landing-btn-ghost landing-plan-cta is-disabled"
+                >
+                  {plan.cta}
+                </button>
+              )}
+            </Reveal>
+          ))}
+        </div>
       </div>
     </section>
   )
@@ -393,8 +450,8 @@ function SiteFooter() {
         <div>
           <BrandLogo to="/" size="footer" />
           <p className="landing-footer-blurb">
-            IF–THEN automations for stablecoin vaults. Non-custodial, on-chain,
-            readable.
+            Rules that run your money — Ethereum, Arbitrum, Base, and Robinhood
+            Chain. Non-custodial and readable.
           </p>
         </div>
         <div className="landing-footer-cols">
@@ -419,17 +476,17 @@ function SiteFooter() {
                 <a href="#how">How it works</a>
               </li>
               <li>
-                <a href="#faq">FAQ</a>
+                <a href="#pricing">Pricing</a>
               </li>
               <li>
-                <a href="#access">Access</a>
+                <a href="#faq">FAQ</a>
               </li>
             </ul>
           </div>
         </div>
       </div>
       <div className="landing-footer-bottom">
-        © {new Date().getFullYear()} bitloop · Built for Sepolia testnet
+        © {new Date().getFullYear()} bitloop · ETH · Arb · Base · Robinhood
       </div>
     </footer>
   )

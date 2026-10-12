@@ -1,44 +1,10 @@
 import { useInView } from '../../hooks/useInView'
 
-/** App-shell chrome around a product demo. */
-export function DemoFrame({
-  title = 'Overview',
-  path = 'bitloop.app',
-  children,
-  caption = 'Product demo — illustrative',
-}) {
+/** Product demo frame — content only (no fake browser chrome). */
+export function DemoFrame({ children, caption }) {
   return (
     <div className="demo-frame">
-      <div className="demo-frame-shell">
-        <aside className="demo-frame-rail" aria-hidden="true">
-          <span className="demo-frame-rail-mark">b</span>
-          <span className="demo-frame-rail-item is-on" />
-          <span className="demo-frame-rail-item" />
-          <span className="demo-frame-rail-item" />
-          <span className="demo-frame-rail-item" />
-          <span className="demo-frame-rail-spacer" />
-          <span className="demo-frame-rail-item is-muted" />
-        </aside>
-        <div className="demo-frame-main">
-          <div className="demo-frame-chrome">
-            <div className="demo-frame-dots">
-              <span className="demo-frame-dot is-red" />
-              <span className="demo-frame-dot is-amber" />
-              <span className="demo-frame-dot is-green" />
-            </div>
-            <div className="demo-frame-url">
-              <span className="demo-frame-url-lock" aria-hidden="true" />
-              <span>{path}</span>
-            </div>
-            <span className="demo-frame-title">{title}</span>
-            <span className="demo-frame-live">
-              <span className="status-dot is-on" />
-              Live
-            </span>
-          </div>
-          <div className="demo-frame-body">{children}</div>
-        </div>
-      </div>
+      <div className="demo-frame-body is-bare">{children}</div>
       {caption ? <p className="demo-frame-caption">{caption}</p> : null}
     </div>
   )
@@ -49,7 +15,7 @@ export function DemoVault() {
   const { ref, inView } = useInView({ once: false, threshold: 0.08 })
 
   return (
-    <DemoFrame title="Vault" path="app/vault">
+    <DemoFrame>
       <div
         ref={ref}
         className={`demo-vault ${inView ? 'is-playing' : ''}`}
@@ -66,7 +32,7 @@ export function DemoVault() {
           <div className="demo-vault-top-meta">
             <span className="demo-pill is-on">
               <span className="status-dot is-on" />
-              Sepolia
+              Ethereum
             </span>
             <span className="demo-pill">Keeper online</span>
           </div>
@@ -144,12 +110,76 @@ export function DemoVault() {
   )
 }
 
+/** Spot strategies — filters + paper scan (distinct from vault demo). */
+export function DemoSpot() {
+  const { ref, inView } = useInView({ once: false, threshold: 0.08 })
+
+  const tokens = [
+    { sym: 'PEPE', liq: '$2.1M', ch: 'Base', match: true },
+    { sym: 'WETH', liq: '$48M', ch: 'ETH', match: true },
+    { sym: 'ARB', liq: '$12M', ch: 'Arb', match: false },
+  ]
+
+  return (
+    <DemoFrame>
+      <div
+        ref={ref}
+        className={`demo-spot ${inView ? 'is-playing' : ''}`}
+        aria-hidden="true"
+      >
+        <header className="demo-spot-top demo-pop" style={{ '--d': '0.04s' }}>
+          <div>
+            <p className="demo-vault-label">Spot strategy</p>
+            <p className="demo-spot-title">Liquidity + holders filter</p>
+          </div>
+          <span className="demo-pill is-on">
+            <span className="status-dot is-on" />
+            Paper
+          </span>
+        </header>
+
+        <div className="demo-spot-filters demo-pop" style={{ '--d': '0.12s' }}>
+          <span>Liq ≥ $1M</span>
+          <span>Holders ≥ 500</span>
+          <span>Age ≥ 7d</span>
+        </div>
+
+        <ul className="demo-spot-list">
+          {tokens.map((t, i) => (
+            <li
+              key={t.sym}
+              className={`demo-spot-row demo-pop ${t.match ? 'is-match' : ''}`}
+              style={{ '--d': `${0.2 + i * 0.1}s` }}
+            >
+              <span className="demo-spot-sym">{t.sym}</span>
+              <span className="demo-spot-meta">
+                {t.liq} · {t.ch}
+              </span>
+              <span className="demo-spot-state">
+                {t.match ? 'Match' : 'Skip'}
+              </span>
+            </li>
+          ))}
+        </ul>
+
+        <div className="demo-spot-footer demo-pop" style={{ '--d': '0.55s' }}>
+          <span>
+            <span className="status-dot is-on" />
+            Paper buy on match · TP / SL armed
+          </span>
+          <span className="demo-builder-cta">Run live scan</span>
+        </div>
+      </div>
+    </DemoFrame>
+  )
+}
+
 /** Builder IF→THEN assembly demo. */
 export function DemoBuilder() {
   const { ref, inView } = useInView({ once: false, threshold: 0.08 })
 
   return (
-    <DemoFrame title="Builder" path="app/new">
+    <DemoFrame>
       <div
         ref={ref}
         className={`demo-builder ${inView ? 'is-playing' : ''}`}
@@ -210,7 +240,7 @@ export function DemoBuilder() {
             <div className="demo-builder-footer" style={{ '--d': '0.75s' }}>
               <span className="demo-builder-status">
                 <span className="status-dot is-on" />
-                Ready to deploy on Sepolia
+                Ready to deploy
               </span>
               <span className="demo-builder-cta">Preview &amp; deploy</span>
             </div>
@@ -265,7 +295,7 @@ export function DemoActivity() {
   ]
 
   return (
-    <DemoFrame title="Activity" path="app/vault">
+    <DemoFrame>
       <div
         ref={ref}
         className={`demo-activity ${inView ? 'is-playing' : ''}`}

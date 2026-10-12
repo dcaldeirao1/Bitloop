@@ -263,7 +263,7 @@ export function Dashboard() {
     },
     'save-pay': {
       title: 'My Automations',
-      blurb: 'Splits, schedules, DCA, and bridges from your Sepolia vault.',
+      blurb: 'Splits, schedules, and DCA from your Sepolia vault.',
     },
     spot: {
       title: 'Spot strategies',
@@ -271,7 +271,7 @@ export function Dashboard() {
     },
     perps: {
       title: 'Perps strategies',
-      blurb: 'Backtest a strategy, then deploy it on Hyperliquid with real funds.',
+      blurb: 'Backtest a strategy, then deploy it on Hyperliquid testnet.',
     },
     settings: {
       title: 'Settings',
@@ -850,8 +850,7 @@ export function Dashboard() {
                   <div className="dash-empty animate-in">
                     <p className="text-[15px] font-medium text-ink">No rules yet</p>
                     <p className="mx-auto mt-2 max-w-md text-[13px] text-muted">
-                      Build a rule to save, pay, or trade — test it before it touches
-                      real funds.
+                      Build a rule to save, pay, or trade — test it before you deploy.
                     </p>
                     <Link to="/app/new" className="btn-primary mt-5 inline-flex">
                       New rule

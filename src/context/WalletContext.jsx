@@ -15,6 +15,7 @@ import {
   onAccountsChanged,
   onChainChanged,
   restoreWallet,
+  switchChain as switchWalletChain,
   wasWalletConnected,
 } from '../lib/wallet'
 
@@ -24,6 +25,7 @@ export function WalletProvider({ children }) {
   const [address, setAddress] = useState(null)
   const [chainId, setChainId] = useState(null)
   const [connecting, setConnecting] = useState(false)
+  const [switchingChain, setSwitchingChain] = useState(false)
   const [restoring, setRestoring] = useState(() => wasWalletConnected())
   const [error, setError] = useState(null)
   const [hasExtension, setHasExtension] = useState(() => hasMetaMask())
@@ -58,6 +60,24 @@ export function WalletProvider({ children }) {
       setConnecting(false)
     }
   }, [applySession])
+
+  const switchChain = useCallback(async (nextChainId) => {
+    setSwitchingChain(true)
+    setError(null)
+    try {
+      await switchWalletChain(nextChainId)
+      setChainId(Number(nextChainId))
+    } catch (err) {
+      // User rejection — don't surface as a global wallet error
+      if (err?.code !== 4001) {
+        const msg = err instanceof Error ? err.message : 'Failed to switch network'
+        setError(msg)
+      }
+      throw err
+    } finally {
+      setSwitchingChain(false)
+    }
+  }, [])
 
   // Restore session on refresh / first load
   useEffect(() => {
@@ -134,20 +154,24 @@ export function WalletProvider({ children }) {
       chainId,
       chainName: chainId != null ? chainLabel(chainId) : '—',
       connecting: connecting || restoring,
+      switchingChain,
       error,
       hasExtension,
       connect,
       disconnect,
+      switchChain,
     }),
     [
       address,
       chainId,
       connecting,
       restoring,
+      switchingChain,
       error,
       hasExtension,
       connect,
       disconnect,
+      switchChain,
     ],
   )
 

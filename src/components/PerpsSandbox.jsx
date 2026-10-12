@@ -59,7 +59,7 @@ function EquitySpark({ equity }) {
 }
 
 /**
- * Hyperliquid perps backtest — step 1 before deploying with real funds.
+ * Hyperliquid perps backtest — step 1 before deploying on testnet.
  * `onContinueToDeploy(payload)` receives { strategy, signal, result, market }.
  */
 export function PerpsSandbox({
@@ -174,7 +174,7 @@ export function PerpsSandbox({
         </h2>
         <p className="mt-1 max-w-2xl text-sm text-muted">
           Tune MA / RSI / volume signals on Hyperliquid candles. Review results, then deploy
-          the same parameters with real funds on Hyperliquid.
+          the same parameters on Hyperliquid testnet.
         </p>
       </div>
 
@@ -629,7 +629,7 @@ export function PerpsSandbox({
                   </h3>
                   <p className="mt-1 text-sm text-muted">
                     Same market, leverage, and TP/SL as this backtest. Opens a live position
-                    with your Hyperliquid balance (testnet when configured).
+                    with your Hyperliquid testnet balance.
                   </p>
                   {liveSignal ? (
                     <p className="mt-2 text-[13px] text-ink-soft">

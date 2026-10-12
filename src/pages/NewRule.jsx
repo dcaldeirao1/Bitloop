@@ -53,7 +53,7 @@ function RuleCategoryPicker() {
           <h1 className="dash-title">New rule</h1>
           <p className="dash-subtitle">
             What do you want this rule to do? Every rule is a trigger plus an
-            action — test before it touches real funds.
+            action — test before you deploy.
           </p>
         </div>
       </div>
@@ -171,7 +171,7 @@ function PerpsRuleCreate() {
         categoryId={RULE_CATEGORY.PERPS}
         activeStep={activeStep}
         title="New perps strategy"
-        subtitle="Backtest MA / RSI / volume signals here, then deploy the same strategy on Hyperliquid with real funds."
+        subtitle="Backtest MA / RSI / volume signals here, then deploy the same strategy on Hyperliquid testnet."
       />
       <RuleFlowSummary
         triggerTitle="Signal"

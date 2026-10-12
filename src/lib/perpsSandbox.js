@@ -237,7 +237,7 @@ function shortFiltersOk(i, candles, ind, strategy) {
 
 /**
  * Latest live signal for the last candle (same rules as the backtest engine).
- * Used when deploying a backtested strategy with real funds.
+ * Used when deploying a backtested strategy on Hyperliquid testnet.
  */
 export function getLatestPerpsSignal(candles, strategyInput = {}) {
   const strategy = normalizeStrategy({ ...DEFAULT_PERPS_STRATEGY, ...strategyInput })

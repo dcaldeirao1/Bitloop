@@ -1,11 +1,17 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ActivityList } from '../components/ActivityList'
 import { DashShell } from '../components/DashShell'
 import { NetworkBanner } from '../components/NetworkBanner'
+import { Sparkline } from '../components/Sparkline'
 import { WalletButton } from '../components/WalletButton'
 import { useWallet } from '../context/WalletContext'
 import { getCachedVault, setCachedVault } from '../lib/automations'
+import {
+  getBalanceSeries,
+  recordVaultBalanceSnapshot,
+  seriesDelta,
+} from '../lib/balanceSeries'
 import { explorerTxUrl, fetchVaultHistory } from '../lib/history'
 import {
   SEPOLIA_USDC,
@@ -63,6 +69,10 @@ export function VaultPage() {
 
       setBalances(b)
       setConfig(c)
+      recordVaultBalanceSnapshot(vaultAddr, {
+        usdc: b.vaultUsdcFormatted,
+        eth: b.vaultEthFormatted,
+      })
 
       try {
         const hist = await fetchVaultHistory(vaultAddr, {
@@ -91,12 +101,32 @@ export function VaultPage() {
     })
   }, [address, refresh])
 
+  const usdcSeries = useMemo(
+    () =>
+      getBalanceSeries(vault, 'usdc', {
+        current: balances?.vaultUsdcFormatted,
+        history,
+      }),
+    [vault, balances?.vaultUsdcFormatted, history],
+  )
+  const ethSeries = useMemo(
+    () =>
+      getBalanceSeries(vault, 'eth', {
+        current: balances?.vaultEthFormatted,
+        history,
+      }),
+    [vault, balances?.vaultEthFormatted, history],
+  )
+  const usdcDelta = seriesDelta(usdcSeries)
+  const ethDelta = seriesDelta(ethSeries)
+
   if (!address) {
     return (
       <DashShell>
         <div className="flex flex-1 items-center justify-center px-6 py-16">
-          <div className="w-full max-w-md text-center">
-            <h1 className="dash-title">Connect to manage your vault</h1>
+          <div className="vault-empty w-full max-w-md text-center">
+            <p className="landing-eyebrow justify-center">Vault</p>
+            <h1 className="dash-title mt-3">Connect to manage your vault</h1>
             <p className="mt-3 text-[15px] text-muted">
               One vault for deposits, withdrawals, and automation activity.
             </p>
@@ -285,6 +315,29 @@ export function VaultPage() {
                 New rule
               </Link>
             </div>
+            {(status || err) && (
+              <div className="mx-auto mt-6 max-w-md space-y-2 text-left">
+                {status ? (
+                  <p className="rounded-xl border border-line bg-surface px-4 py-2.5 font-mono text-[12px] text-ink-soft">
+                    {status}
+                    {statusTx ? (
+                      <>
+                        {' '}
+                        <a
+                          href={explorerTxUrl(statusTx)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-teal hover:underline"
+                        >
+                          {statusTx.slice(0, 10)}…↗
+                        </a>
+                      </>
+                    ) : null}
+                  </p>
+                ) : null}
+                {err ? <p className="alert-error">{err}</p> : null}
+              </div>
+            )}
           </section>
         ) : (
           <>
@@ -313,19 +366,50 @@ export function VaultPage() {
               ) : null}
             </section>
 
-            <section className="mt-4 rounded-2xl border border-line bg-surface px-5 py-6">
-              <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-muted">
-                Balance
-              </p>
-              <p className="mt-2 font-mono text-[36px] font-semibold tracking-tight text-ink sm:text-[42px]">
-                {usdc}
-                <span className="ml-2 text-[16px] font-normal text-muted">USDC</span>
-              </p>
-              <p className="mt-1 font-mono text-[15px] text-muted">
-                {eth} ETH
-                <span className="mx-2 text-line-strong">·</span>
-                Wallet {walletUsdc}
-              </p>
+            <section className="vault-balance-panel mt-4">
+              <div className="vault-balance-grid">
+                <article className="vault-balance-card">
+                  <div className="vault-balance-head">
+                    <span className="vault-token is-usdc">$</span>
+                    <span>USDC</span>
+                  </div>
+                  <p className="vault-balance-amt">{usdc}</p>
+                  <p
+                    className={`vault-balance-delta ${
+                      usdcDelta > 0 ? 'is-up' : usdcDelta < 0 ? 'is-down' : ''
+                    }`}
+                  >
+                    {loadingBalances
+                      ? '…'
+                      : usdcDelta === 0
+                        ? 'No change in window'
+                        : `${usdcDelta > 0 ? '+' : ''}${trimAmt(usdcDelta)} window`}
+                  </p>
+                  <Sparkline values={usdcSeries} tone="teal" />
+                </article>
+
+                <article className="vault-balance-card">
+                  <div className="vault-balance-head">
+                    <span className="vault-token is-eth">Ξ</span>
+                    <span>ETH</span>
+                  </div>
+                  <p className="vault-balance-amt">{eth}</p>
+                  <p
+                    className={`vault-balance-delta ${
+                      ethDelta > 0 ? 'is-up' : ethDelta < 0 ? 'is-down' : ''
+                    }`}
+                  >
+                    {loadingBalances
+                      ? '…'
+                      : ethDelta === 0
+                        ? 'No change in window'
+                        : `${ethDelta > 0 ? '+' : ''}${trimAmt(ethDelta, 5)} window`}
+                  </p>
+                  <Sparkline values={ethSeries} tone="mango" />
+                </article>
+              </div>
+
+              <p className="vault-balance-wallet">Wallet {walletUsdc}</p>
 
               <div className="mt-5 flex flex-wrap gap-3">
                 <button

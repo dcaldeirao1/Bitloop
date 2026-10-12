@@ -1,15 +1,17 @@
+import { BrandLogo } from './BrandLogo'
+import { ChainSwitcher } from './ChainSwitcher'
 import { ThemeToggle } from './ThemeToggle'
 import { WalletMenu } from './WalletButton'
-import { BrandLogo } from './BrandLogo'
 
 export function AppHeader() {
   return (
-    <header className="sticky top-0 z-30 border-b border-line bg-surface/90 backdrop-blur-md">
-      <div className="flex w-full flex-wrap items-center justify-between gap-4 px-5 py-3.5 sm:px-6">
+    <header className="app-header">
+      <div className="app-header-inner">
         <BrandLogo to="/app" size="nav" />
 
         <div className="flex items-center gap-2">
           <ThemeToggle />
+          <ChainSwitcher />
           <WalletMenu />
         </div>
       </div>

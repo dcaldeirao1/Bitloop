@@ -1,14 +1,20 @@
 import { BrowserProvider } from 'ethers'
+import {
+  APP_CHAINS,
+  SEPOLIA_CHAIN_ID,
+  chainLabel,
+  getChain,
+  isSepolia,
+  toWalletChainParams,
+} from './chains'
 
-export const CHAIN_NAMES = {
-  1: 'Ethereum',
-  11155111: 'Sepolia',
-  8453: 'Base',
-  84532: 'Base Sepolia',
-  137: 'Polygon',
-  42161: 'Arbitrum',
-  10: 'Optimism',
-}
+export { APP_CHAINS, SEPOLIA_CHAIN_ID, chainLabel, isSepolia }
+export { getChain, getChainRpcUrl, isVaultChain, explorerAddressUrl } from './chains'
+
+/** @deprecated use APP_CHAINS / chainLabel — kept for older imports */
+export const CHAIN_NAMES = Object.fromEntries(
+  APP_CHAINS.map((c) => [c.id, c.name]),
+)
 
 const CONNECTED_KEY = 'programmable-money-wallet-connected'
 
@@ -90,43 +96,41 @@ export async function getChainId() {
   return Number(network.chainId)
 }
 
-export function chainLabel(chainId) {
-  return CHAIN_NAMES[chainId] ?? `Chain ${chainId}`
-}
-
-export const SEPOLIA_CHAIN_ID = 11155111
-
-export function isSepolia(chainId) {
-  return Number(chainId) === SEPOLIA_CHAIN_ID
-}
-
-/** Prompt MetaMask to switch to Sepolia (adds the network if missing). */
-export async function switchToSepolia() {
+/**
+ * Switch MetaMask to a supported chain. Adds the network (with our RPC) if missing.
+ */
+export async function switchChain(chainId) {
   if (!window.ethereum) throw new Error('MetaMask is not installed')
-  const hex = `0x${SEPOLIA_CHAIN_ID.toString(16)}`
+
+  const chain = getChain(chainId)
+  if (!chain) throw new Error(`Unsupported chain: ${chainId}`)
+
+  const hex = `0x${Number(chain.id).toString(16)}`
   try {
     await window.ethereum.request({
       method: 'wallet_switchEthereumChain',
       params: [{ chainId: hex }],
     })
   } catch (err) {
-    if (err?.code === 4902) {
+    // 4902 = unrecognized chain — add it with our Alchemy/public RPC
+    if (err?.code === 4902 || err?.code === -32603) {
+      const params = toWalletChainParams(chain)
+      if (!params.rpcUrls?.length) {
+        throw new Error(`No RPC configured for ${chain.name}`)
+      }
       await window.ethereum.request({
         method: 'wallet_addEthereumChain',
-        params: [
-          {
-            chainId: hex,
-            chainName: 'Sepolia',
-            nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 },
-            rpcUrls: ['https://ethereum-sepolia-rpc.publicnode.com'],
-            blockExplorerUrls: ['https://sepolia.etherscan.io'],
-          },
-        ],
+        params: [params],
       })
       return
     }
     throw err
   }
+}
+
+/** Prompt MetaMask to switch to Sepolia (adds the network if missing). */
+export async function switchToSepolia() {
+  return switchChain(SEPOLIA_CHAIN_ID)
 }
 
 export function onAccountsChanged(handler) {

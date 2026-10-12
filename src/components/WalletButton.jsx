@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { truncateAddress } from '../lib/automations'
+import { explorerAddressUrl } from '../lib/chains'
 import { useWallet } from '../context/WalletContext'
 
 /** Standalone connect CTA (empty states, landing CTAs). */
@@ -24,8 +25,7 @@ export function WalletButton({
 
 /** Header control: connect CTA or connected account menu. */
 export function WalletMenu() {
-  const { address, chainName, chainId, connecting, connect, disconnect } =
-    useWallet()
+  const { address, chainId, connecting, connect, disconnect } = useWallet()
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const rootRef = useRef(null)
@@ -62,12 +62,7 @@ export function WalletMenu() {
     setTimeout(() => setCopied(false), 1400)
   }
 
-  const explorer =
-    chainId === 11155111
-      ? `https://sepolia.etherscan.io/address/${address}`
-      : chainId === 1
-        ? `https://etherscan.io/address/${address}`
-        : null
+  const explorer = explorerAddressUrl(chainId, address)
 
   return (
     <div className="relative" ref={rootRef}>
@@ -83,9 +78,6 @@ export function WalletMenu() {
         </span>
         <span className="hidden font-mono text-[13px] text-ink sm:inline">
           {truncateAddress(address, 4)}
-        </span>
-        <span className="rounded-md bg-bg px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
-          {chainName}
         </span>
         <Chevron open={open} />
       </button>

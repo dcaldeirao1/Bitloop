@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { BrandLogo } from '../components/BrandLogo'
+import { ThemeToggle } from '../components/ThemeToggle'
 import { useAuth } from '../context/AuthContext'
 
 export function SignUp() {
@@ -35,13 +36,13 @@ export function SignUp() {
       footer={
         <>
           Already have an account?{' '}
-          <Link to="/signin" className="font-medium text-ink hover:underline">
+          <Link to="/signin" className="auth-link">
             Sign in
           </Link>
         </>
       }
     >
-      <form onSubmit={onSubmit} className="space-y-4">
+      <form onSubmit={onSubmit} className="auth-form">
         <Field
           label="Username"
           value={username}
@@ -65,7 +66,7 @@ export function SignUp() {
           autoComplete="new-password"
           placeholder="••••••••"
         />
-        {error && <p className="text-[13px] text-red-600">{error}</p>}
+        {error && <p className="alert-error">{error}</p>}
         <button type="submit" disabled={busy} className="btn-primary w-full">
           {busy ? 'Creating…' : 'Sign up'}
         </button>
@@ -105,13 +106,13 @@ export function SignIn() {
       footer={
         <>
           New here?{' '}
-          <Link to="/signup" className="font-medium text-ink hover:underline">
+          <Link to="/signup" className="auth-link">
             Create an account
           </Link>
         </>
       }
     >
-      <form onSubmit={onSubmit} className="space-y-4">
+      <form onSubmit={onSubmit} className="auth-form">
         <Field
           label="Email"
           type="email"
@@ -128,7 +129,7 @@ export function SignIn() {
           autoComplete="current-password"
           placeholder="••••••••"
         />
-        {error && <p className="text-[13px] text-red-600">{error}</p>}
+        {error && <p className="alert-error">{error}</p>}
         <button type="submit" disabled={busy} className="btn-primary w-full">
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
@@ -139,19 +140,32 @@ export function SignIn() {
 
 function AuthShell({ title, subtitle, footer, children }) {
   return (
-    <div className="flex min-h-screen flex-col bg-bg">
-      <header className="mx-auto flex w-full max-w-5xl items-center justify-between px-6 py-5">
+    <div className="auth-page">
+      <div className="auth-atmosphere" aria-hidden="true">
+        <span className="landing-orb is-a" />
+        <span className="landing-orb is-b" />
+        <span className="landing-orb is-c" />
+        <div className="landing-grid-bg auth-grid" />
+        <div className="landing-hero-noise" />
+      </div>
+
+      <header className="auth-top">
         <BrandLogo to="/" size="nav" />
-        <Link to="/" className="text-[13px] text-muted hover:text-ink">
-          Back
-        </Link>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <Link to="/" className="auth-back">
+            Back
+          </Link>
+        </div>
       </header>
-      <div className="flex flex-1 items-center justify-center px-6 pb-16">
-        <div className="w-full max-w-md rounded-2xl border border-line bg-surface p-8">
-          <h1 className="text-2xl font-semibold tracking-tight text-ink">{title}</h1>
-          <p className="mt-2 text-[14px] text-muted">{subtitle}</p>
-          <div className="mt-8">{children}</div>
-          <p className="mt-6 text-center text-[13px] text-muted">{footer}</p>
+
+      <div className="auth-center">
+        <div className="auth-panel">
+          <p className="auth-eyebrow">bitloop</p>
+          <h1 className="auth-title">{title}</h1>
+          <p className="auth-subtitle">{subtitle}</p>
+          <div className="auth-body">{children}</div>
+          <p className="auth-footer">{footer}</p>
         </div>
       </div>
     </div>
@@ -160,13 +174,12 @@ function AuthShell({ title, subtitle, footer, children }) {
 
 function Field({ label, value, onChange, type = 'text', ...rest }) {
   return (
-    <label className="block text-[13px] font-medium text-ink">
-      {label}
+    <label className="auth-field">
+      <span>{label}</span>
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1.5 w-full rounded-xl border border-line bg-bg px-3 py-2.5 text-[14px] text-ink outline-none focus:border-ink"
         required
         {...rest}
       />
