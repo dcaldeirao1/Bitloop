@@ -251,6 +251,8 @@ export async function fetchVaultHistory(
       blockNumber: ev.blockNumber,
       logIndex: ev.index,
       caller: ev.args.caller,
+      ruleId:
+        ev.args.ruleId != null ? Number(ev.args.ruleId) : undefined,
       status: 'confirmed',
     })
   }
@@ -290,6 +292,8 @@ export async function fetchVaultHistory(
       blockNumber: ev.blockNumber,
       logIndex: ev.index,
       caller: ev.args.caller,
+      ruleId:
+        ev.args.ruleId != null ? Number(ev.args.ruleId) : undefined,
       status: 'confirmed',
     })
   }

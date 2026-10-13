@@ -93,7 +93,7 @@ function scheduleTriggerFieldsOk(trigger) {
     return Number.isFinite(floor) && floor >= 0
   }
   if (trigger.type === 'eth_price_below' || trigger.type === 'eth_price_above') {
-    const px = Number(trigger.priceUsd)
+    const px = Number(String(trigger.priceUsd ?? '').replace(/[$,\s]/g, ''))
     return Number.isFinite(px) && px > 0
   }
   if (trigger.type === 'time_window') {
@@ -147,19 +147,14 @@ function buildTriggerPayload(trigger, result) {
     }
   }
 
-  if (trigger.type === 'eth_price_below') {
+  if (trigger.type === 'eth_price_below' || trigger.type === 'eth_price_above') {
+    const px = Number(String(trigger.priceUsd ?? '').replace(/[$,\s]/g, ''))
+    const nice = Number.isFinite(px) ? String(px) : String(trigger.priceUsd ?? '')
+    const op = trigger.type === 'eth_price_below' ? '≤' : '≥'
     return {
       ...base,
-      priceUsd: String(trigger.priceUsd),
-      label: `ETH ≤ $${trigger.priceUsd} · every ${result.intervalValue} ${result.intervalUnit}`,
-    }
-  }
-
-  if (trigger.type === 'eth_price_above') {
-    return {
-      ...base,
-      priceUsd: String(trigger.priceUsd),
-      label: `ETH ≥ $${trigger.priceUsd} · every ${result.intervalValue} ${result.intervalUnit}`,
+      priceUsd: nice,
+      label: `ETH ${op} $${nice} · every ${result.intervalValue} ${result.intervalUnit}`,
     }
   }
 
@@ -202,12 +197,13 @@ export function Builder() {
     return automationKind(action, trigger)
   }, [trigger, action])
 
+  /** Split still has one on-chain slot; DCA/recurring are multi-slot on new vaults. */
   const overwriteRules = useMemo(() => {
-    if (!draftKind) return []
+    if (draftKind !== 'split') return []
     return existingRules.filter(
       (r) =>
         r.onchain !== false &&
-        automationKind(r.action, r.trigger) === draftKind,
+        automationKind(r.action, r.trigger) === 'split',
     )
   }, [existingRules, draftKind])
 
@@ -423,6 +419,7 @@ export function Builder() {
             router: result.router,
             minOut: result.minOut,
             tokenOut: result.tokenOut,
+            ruleId: result.ruleId,
           },
           onchain: true,
         })
@@ -448,6 +445,7 @@ export function Builder() {
             minOut: result.minOut,
             tokenIn: result.token,
             tokenSymbol: result.tokenSymbol,
+            ruleId: result.ruleId,
           },
           onchain: true,
         })
@@ -482,6 +480,7 @@ export function Builder() {
             minOut: result.minOut,
             tokenOut: result.tokenOut,
             outMode: result.tokenOut ? 'token' : 'eth',
+            ruleId: result.ruleId,
           },
           onchain: true,
         })
@@ -506,6 +505,7 @@ export function Builder() {
             to: result.toAddress,
             token: result.token,
             tokenSymbol: result.tokenSymbol,
+            ruleId: result.ruleId,
           },
           onchain: true,
         })
@@ -527,6 +527,7 @@ export function Builder() {
             amountHuman: result.amountHuman,
             decimals: result.decimals,
             to: result.toAddress,
+            ruleId: result.ruleId,
           },
           onchain: true,
         })
@@ -571,6 +572,7 @@ export function Builder() {
             depositAddress: result.depositAddress,
             requestId: result.requestId,
             relaySummary: result.relaySummary,
+            ruleId: result.ruleId,
           },
           onchain: true,
         })
@@ -612,7 +614,7 @@ export function Builder() {
         })
       }
 
-      // Soft-pause superseded same-kind rows (vault has one on-chain slot per kind)
+      // Income split still has a single on-chain slot — pause superseded splits only.
       if (overwriteRules.length) {
         setStatus('Updating superseded automations…')
         await Promise.all(
@@ -702,10 +704,10 @@ export function Builder() {
         </div>
       </div>
 
-      {overwriteRules.length > 0 && draftKind ? (
+      {overwriteRules.length > 0 && draftKind === 'split' ? (
         <p className="alert-warn mb-4" role="status">
-          This vault has one on-chain {draftKind} slot. Deploying will replace the
-          current {draftKind} rule and pause {overwriteRules.length} existing
+          This vault has one on-chain income-split slot. Deploying will replace the
+          current split and pause {overwriteRules.length} existing split
           automation{overwriteRules.length === 1 ? '' : 's'} in your library.
         </p>
       ) : null}
@@ -758,7 +760,7 @@ export function Builder() {
               <li>· Keeper executes only while the automation stays Active and funded</li>
               {overwriteRules.length > 0 ? (
                 <li className="text-mango">
-                  · Replaces the existing on-chain {draftKind} configuration
+                  · Replaces the existing on-chain split configuration
                 </li>
               ) : null}
             </ul>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useWallet } from '../context/WalletContext'
 import { APP_CHAINS, getChain } from '../lib/chains'
+import { ChainIcon } from './ChainIcon'
 
 /** Header control: switch MetaMask across configured app chains. */
 export function ChainSwitcher() {
@@ -10,7 +11,7 @@ export function ChainSwitcher() {
   const rootRef = useRef(null)
 
   const current = getChain(chainId)
-  const label = current?.shortName || (chainId != null ? `ID ${chainId}` : 'Network')
+  const label = current?.shortName || 'Network'
 
   useEffect(() => {
     if (!open) return
@@ -58,16 +59,17 @@ export function ChainSwitcher() {
         aria-haspopup="listbox"
         disabled={switchingChain}
       >
-        <span className={`chain-dot ${current?.vaultSupported ? 'is-vault' : ''}`} />
+        {current ? (
+          <ChainIcon chainKey={current.key} size={16} />
+        ) : (
+          <span className="chain-dot" />
+        )}
         <span>{switchingChain ? 'Switching…' : label}</span>
         <Chevron open={open} />
       </button>
 
       {open ? (
         <div className="chain-switcher-menu" role="listbox" aria-label="Networks">
-          <p className="chain-switcher-hint">
-            Switch MetaMask network. Uses your configured Alchemy RPCs when adding a chain.
-          </p>
           {APP_CHAINS.map((chain) => {
             const active = chain.id === chainId
             return (
@@ -81,12 +83,10 @@ export function ChainSwitcher() {
                 disabled={switchingChain}
               >
                 <span className="chain-switcher-item-main">
+                  <ChainIcon chainKey={chain.key} size={20} />
                   <span className="chain-switcher-name">{chain.name}</span>
-                  {chain.vaultSupported ? (
-                    <span className="chain-switcher-tag">Vault</span>
-                  ) : null}
                 </span>
-                <span className="chain-switcher-id">{chain.id}</span>
+                {active ? <span className="chain-switcher-check" aria-hidden="true">✓</span> : null}
               </button>
             )
           })}

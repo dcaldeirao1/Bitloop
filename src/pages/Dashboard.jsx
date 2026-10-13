@@ -14,7 +14,9 @@ import {
   TradingSandbox,
 } from '../components/TradingSandbox'
 import { TradingStrategyForm } from '../components/TradingStrategyForm'
+import { BalanceCards } from '../components/BalanceCards'
 import { VaultCommandCenter } from '../components/VaultCommandCenter'
+import { recordVaultBalanceSnapshot } from '../lib/balanceSeries'
 import { WalletButton } from '../components/WalletButton'
 import { useWallet } from '../context/WalletContext'
 import {
@@ -30,6 +32,7 @@ import {
 import { getAutomationFunding } from '../lib/automationBlocks'
 import { formatUsdCompact } from '../lib/dexscreener'
 import { fetchVaultHistory } from '../lib/history'
+import { filterHistoryForRule } from '../lib/ruleHistory'
 import {
   RULE_CATEGORY,
   getCategoryMeta,
@@ -44,18 +47,6 @@ import {
   setAutomationOnchainEnabled,
   SEPOLIA_USDC,
 } from '../lib/vault'
-
-function isDcaRule(rule) {
-  const type = rule.action?.type
-  return (
-    type === 'dca_swap' ||
-    type === 'swap_usdc_eth' ||
-    type === 'buy_eth' ||
-    type === 'buy_token' ||
-    type === 'sell_eth_usdc' ||
-    type === 'sell_token_eth'
-  )
-}
 
 function isStrategyRule(rule) {
   return isSpotStrategyRule(rule)
@@ -96,7 +87,7 @@ export function Dashboard() {
   const [matchesLoading, setMatchesLoading] = useState(null)
   const [balances, setBalances] = useState(null)
   const [loadingBalances, setLoadingBalances] = useState(false)
-  const [scheduleByVault, setScheduleByVault] = useState({})
+  const [scheduleByRule, setScheduleByRule] = useState({})
   const [vaultActivity, setVaultActivity] = useState([])
   const [loadingActivity, setLoadingActivity] = useState(false)
 
@@ -175,6 +166,10 @@ export function Dashboard() {
         ])
         if (cancelled) return
         setBalances(b)
+        recordVaultBalanceSnapshot(vault, {
+          usdc: b.vaultUsdcFormatted,
+          eth: b.vaultEthFormatted,
+        })
         if (schedule) {
           setScheduleByVault((prev) => ({ ...prev, [vault.toLowerCase()]: schedule }))
         }
@@ -289,12 +284,7 @@ export function Dashboard() {
         token: rule.trigger?.token || SEPOLIA_USDC,
         savingsAddress: rule.action?.to,
       })
-      const focused =
-        isDcaRule(rule)
-          ? items.filter((i) => i.type === 'dca' || i.type === 'deposit')
-          : rule.action?.type === 'send_amount' || rule.action?.type === 'send_token'
-            ? items.filter((i) => i.type === 'recurring' || i.type === 'deposit')
-            : items.filter((i) => i.type === 'split' || i.type === 'deposit')
+      const focused = filterHistoryForRule(rule, items)
       setHistoryByRule((prev) => ({ ...prev, [rule.id]: focused }))
     } catch (err) {
       if (!quiet) {
@@ -309,14 +299,18 @@ export function Dashboard() {
     }
   }, [])
 
-  const refreshSchedule = useCallback(async (vaultAddress) => {
-    if (!vaultAddress) return
+  const refreshSchedule = useCallback(async (rule) => {
+    if (!rule?.vaultAddress) return
     try {
-      const schedule = await getVaultScheduleState(vaultAddress)
+      const kind = automationKind(rule.action, rule.trigger)
+      const schedule = await getVaultScheduleState(rule.vaultAddress, {
+        ruleId: rule.action?.ruleId,
+        kind,
+      })
       if (schedule) {
-        setScheduleByVault((prev) => ({
+        setScheduleByRule((prev) => ({
           ...prev,
-          [vaultAddress.toLowerCase()]: schedule,
+          [rule.id]: schedule,
         }))
       }
     } catch {
@@ -331,7 +325,7 @@ export function Dashboard() {
     }
     setExpandedId(rule.id)
     void loadHistory(rule)
-    void refreshSchedule(rule.vaultAddress)
+    void refreshSchedule(rule)
   }
 
   useEffect(() => {
@@ -341,7 +335,7 @@ export function Dashboard() {
 
     const tick = () => {
       void loadHistory(rule, { quiet: true })
-      void refreshSchedule(rule.vaultAddress)
+      void refreshSchedule(rule)
     }
 
     const id = setInterval(tick, 15_000)
@@ -349,12 +343,19 @@ export function Dashboard() {
   }, [expandedId, rules, loadHistory, refreshSchedule])
 
   useEffect(() => {
-    if (!vault) return
-    const id = setInterval(() => {
-      void refreshSchedule(vault)
-    }, 30_000)
+    const onchain = rules.filter(
+      (r) => r.vaultAddress && !isStrategyRule(r) && r.onchain !== false,
+    )
+    if (!onchain.length) return
+    const tick = () => {
+      for (const rule of onchain.slice(0, 12)) {
+        void refreshSchedule(rule)
+      }
+    }
+    tick()
+    const id = setInterval(tick, 30_000)
     return () => clearInterval(id)
-  }, [vault, refreshSchedule])
+  }, [rules, refreshSchedule])
 
   const copyVault = async () => {
     if (!vault) return
@@ -385,7 +386,7 @@ export function Dashboard() {
       }
       const updated = await updateAutomation(address, rule.id, { enabled })
       setRules((prev) => prev.map((r) => (r.id === rule.id ? updated : r)))
-      if (rule.vaultAddress) void refreshSchedule(rule.vaultAddress)
+      if (rule.vaultAddress) void refreshSchedule(rule)
     } catch (err) {
       setActionError(humanActionError(err, 'Update failed'))
     } finally {
@@ -585,30 +586,28 @@ export function Dashboard() {
     setActionError(null)
     try {
       const kind = automationKind(rule.action, rule.trigger)
-      const othersSameKind = rules.filter(
-        (r) =>
-          r.id !== rule.id &&
-          r.vaultAddress &&
-          rule.vaultAddress &&
-          r.vaultAddress.toLowerCase() === rule.vaultAddress.toLowerCase() &&
-          automationKind(r.action, r.trigger) === kind,
-      )
-      // Disable on-chain when deleting the last row for that vault slot
-      if (
-        kind &&
-        rule.onchain !== false &&
-        rule.vaultAddress &&
-        othersSameKind.length === 0
-      ) {
-        try {
-          await setAutomationOnchainEnabled(rule, false)
-        } catch (chainErr) {
-          throw new Error(
-            humanActionError(
-              chainErr,
-              'Could not disable on-chain automation before delete',
-            ),
-          )
+      // Disable this rule's on-chain slot (multi-slot) or the shared slot if last of kind.
+      if (kind && rule.onchain !== false && rule.vaultAddress) {
+        const hasSlot = rule.action?.ruleId != null
+        const othersSameKind = rules.filter(
+          (r) =>
+            r.id !== rule.id &&
+            r.vaultAddress &&
+            rule.vaultAddress &&
+            r.vaultAddress.toLowerCase() === rule.vaultAddress.toLowerCase() &&
+            automationKind(r.action, r.trigger) === kind,
+        )
+        if (hasSlot || othersSameKind.length === 0) {
+          try {
+            await setAutomationOnchainEnabled(rule, false)
+          } catch (chainErr) {
+            throw new Error(
+              humanActionError(
+                chainErr,
+                'Could not disable on-chain automation before delete',
+              ),
+            )
+          }
         }
       }
       await deleteAutomation(address, rule.id)
@@ -644,7 +643,7 @@ export function Dashboard() {
 
   const timingFor = (rule) => {
     if (!rule.vaultAddress) return null
-    return scheduleByVault[rule.vaultAddress.toLowerCase()] || null
+    return scheduleByRule[rule.id] || null
   }
 
   const renderRuleCard = (rule, index, { forceExpanded = false } = {}) => {
@@ -798,7 +797,7 @@ export function Dashboard() {
                 spotTab !== 'test' &&
                 !showStrategyLaunch ? (
                 <Link to="/app/new?type=spot" className="btn-primary">
-                  New rule
+                  New strategy
                 </Link>
               ) : null}
             </div>
@@ -808,6 +807,15 @@ export function Dashboard() {
 
           {section === 'overview' && (
             <>
+              <section className="overview-balances animate-in">
+                <BalanceCards
+                  vault={vault}
+                  balances={balances}
+                  loadingBalances={loadingBalances}
+                  history={vaultActivity}
+                />
+              </section>
+
               <VaultCommandCenter
                 vault={vault}
                 balances={balances}
@@ -1065,7 +1073,7 @@ export function Dashboard() {
                         funds before enabling a live paper scan.
                       </p>
                       <Link to="/app/new?type=spot" className="btn-primary mt-5 inline-flex">
-                        New rule
+                        New strategy
                       </Link>
                     </div>
                   )}

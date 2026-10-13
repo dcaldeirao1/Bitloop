@@ -3043,35 +3043,39 @@ html.dark .demo-activity-amt.is-swap {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  border-radius: 0.75rem;
-  padding: 0.55rem 0.85rem;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.7rem;
   font-size: 0.875rem;
   font-weight: 500;
-  color: var(--color-ink-soft);
+  color: var(--color-muted);
   text-align: left;
   text-decoration: none;
-  transition: background 0.15s ease, color 0.15s ease;
+  background: transparent;
+  box-shadow: none;
+  transition: color 0.15s ease, background 0.15s ease;
 }
 
 .dash-nav-item:hover {
   color: var(--color-ink);
-  background: color-mix(in srgb, var(--color-surface) 70%, transparent);
+  background: color-mix(in srgb, var(--color-ink) 4%, transparent);
 }
 
 .dash-nav-item.is-active {
   color: var(--color-ink);
-  background: color-mix(in srgb, var(--color-teal) 12%, var(--color-surface));
-  box-shadow: inset 3px 0 0 var(--color-teal);
+  font-weight: 600;
+  background: transparent;
+  box-shadow: none;
 }
 
 .dash-nav-count {
   font-family: var(--font-mono);
   font-size: 0.75rem;
   color: var(--color-muted);
+  opacity: 0.85;
 }
 
 .dash-nav-item.is-active .dash-nav-count {
-  color: var(--color-teal);
+  color: var(--color-ink-soft);
 }
 
 .dash-nav-soon {
@@ -3130,18 +3134,19 @@ html.dark .demo-activity-amt.is-swap {
 .dash-chip {
   flex-shrink: 0;
   border-radius: 999px;
-  border: 1px solid var(--color-line);
+  border: 1px solid transparent;
   padding: 0.4rem 0.85rem;
   font-size: 0.8125rem;
   font-weight: 500;
   color: var(--color-muted);
-  background: var(--color-surface);
+  background: transparent;
 }
 
 .dash-chip.is-active {
-  border-color: color-mix(in srgb, var(--color-teal) 40%, transparent);
-  background: color-mix(in srgb, var(--color-teal) 16%, var(--color-surface));
+  border-color: transparent;
+  background: transparent;
   color: var(--color-ink);
+  font-weight: 600;
 }
 
 .dash-main {
@@ -4754,14 +4759,28 @@ html.dark .auth-eyebrow {
 }
 
 /* Chain switcher */
+.chain-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.chain-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .chain-switcher-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.45rem;
   border-radius: 999px;
   border: 1px solid var(--color-line);
   background: var(--color-surface);
-  padding: 0.4rem 0.7rem 0.4rem 0.55rem;
+  padding: 0.35rem 0.7rem 0.35rem 0.4rem;
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -4799,21 +4818,13 @@ html.dark .auth-eyebrow {
   right: 0;
   z-index: 40;
   margin-top: 0.5rem;
-  width: 17.5rem;
+  width: 14.5rem;
   overflow: hidden;
   border-radius: 0.9rem;
   border: 1px solid var(--color-line);
   background: var(--color-surface);
   box-shadow: 0 18px 40px -24px color-mix(in srgb, var(--color-ink) 45%, transparent);
-}
-
-.chain-switcher-hint {
-  margin: 0;
-  padding: 0.7rem 0.85rem;
-  border-bottom: 1px solid var(--color-line);
-  font-size: 0.6875rem;
-  line-height: 1.4;
-  color: var(--color-muted);
+  padding: 0.35rem;
 }
 
 .chain-switcher-item {
@@ -4822,7 +4833,8 @@ html.dark .auth-eyebrow {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  padding: 0.65rem 0.85rem;
+  border-radius: 0.65rem;
+  padding: 0.55rem 0.65rem;
   text-align: left;
   transition: background 0.12s ease;
 }
@@ -4848,25 +4860,10 @@ html.dark .auth-eyebrow {
   color: var(--color-ink);
 }
 
-.chain-switcher-tag {
-  border-radius: 0.3rem;
-  background: color-mix(in srgb, var(--color-teal) 18%, transparent);
-  padding: 0.1rem 0.35rem;
-  font-size: 0.5625rem;
+.chain-switcher-check {
+  font-size: 0.75rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-teal-deep);
-}
-
-html.dark .chain-switcher-tag {
   color: var(--color-teal);
-}
-
-.chain-switcher-id {
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  color: var(--color-muted);
 }
 
 .chain-switcher-error {
@@ -5143,16 +5140,36 @@ html.dark .demo-spot-row.is-match .demo-spot-state {
 }
 
 .vault-balance-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(5.5rem, 42%);
+  gap: 0.5rem 0.75rem;
+  align-items: stretch;
   border-radius: 1rem;
   border: 1px solid var(--color-line);
-  background:
-    radial-gradient(
-      ellipse 80% 60% at 80% 0%,
-      color-mix(in srgb, var(--color-teal) 8%, transparent),
-      transparent 55%
-    ),
-    color-mix(in srgb, var(--color-bg) 55%, var(--color-surface));
-  padding: 0.95rem 1rem 0.75rem;
+  background: color-mix(in srgb, var(--color-surface) 88%, var(--color-bg));
+  padding: 0.95rem 1rem 0.85rem;
+  overflow: hidden;
+  min-height: 7.25rem;
+}
+
+.vault-balance-copy {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.vault-balance-chart {
+  position: relative;
+  z-index: 0;
+  align-self: end;
+  min-width: 0;
+  height: 3.5rem;
+  margin: 0 -0.15rem -0.15rem 0;
+  opacity: 0.95;
 }
 
 .vault-balance-head {
@@ -5190,17 +5207,19 @@ html.dark .vault-token.is-usdc {
 }
 
 .vault-balance-amt {
-  margin: 0.55rem 0 0;
+  margin: 0.45rem 0 0;
   font-family: var(--font-mono);
-  font-size: clamp(1.35rem, 3vw, 1.65rem);
+  font-size: clamp(1.45rem, 3.2vw, 1.85rem);
   font-weight: 600;
   letter-spacing: -0.03em;
   color: var(--color-ink);
+  line-height: 1.1;
 }
 
 .vault-balance-delta {
-  margin: 0.2rem 0 0.55rem;
+  margin: 0.3rem 0 0;
   font-size: 0.75rem;
+  font-weight: 500;
   color: var(--color-muted);
 }
 
@@ -5225,25 +5244,312 @@ html.dark .vault-balance-delta.is-up {
 .balance-spark {
   display: block;
   width: 100%;
-  height: 1.75rem;
-  margin-top: 0.15rem;
+  height: 100%;
 }
 
 .balance-spark-line {
   fill: none;
   stroke: var(--color-teal);
-  stroke-width: 1.75;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
 }
 
-.balance-spark-line.is-mango {
+.balance-spark.is-mango .balance-spark-line,
+.balance-spark.is-mango .balance-spark-dot {
   stroke: var(--color-mango);
 }
 
-.money-os-spark {
-  width: 100%;
+.balance-spark.is-mango .balance-spark-dot {
+  fill: var(--color-mango);
+}
+
+.balance-spark.is-down .balance-spark-line,
+.balance-spark.is-down .balance-spark-dot {
+  stroke: var(--color-danger);
+}
+
+.balance-spark.is-down .balance-spark-dot {
+  fill: var(--color-danger);
+}
+
+.balance-spark-area {
+  stroke: none;
+}
+
+.balance-spark-stop-top {
+  stop-color: var(--color-teal);
+  stop-opacity: 0.28;
+}
+
+.balance-spark-stop-bot {
+  stop-color: var(--color-teal);
+  stop-opacity: 0;
+}
+
+.balance-spark.is-mango .balance-spark-stop-top {
+  stop-color: var(--color-mango);
+  stop-opacity: 0.26;
+}
+
+.balance-spark.is-mango .balance-spark-stop-bot {
+  stop-color: var(--color-mango);
+  stop-opacity: 0;
+}
+
+.balance-spark.is-down .balance-spark-stop-top {
+  stop-color: var(--color-danger);
+  stop-opacity: 0.22;
+}
+
+.balance-spark.is-down .balance-spark-stop-bot {
+  stop-color: var(--color-danger);
+  stop-opacity: 0;
+}
+
+.balance-spark-dot {
+  fill: var(--color-teal);
+  stroke: none;
+}
+
+.overview-balances {
+  margin-bottom: 1.25rem;
+}
+
+/* Cleaner landing hero */
+.landing-hero.is-clean {
+  min-height: auto;
+  padding: 3.5rem 0 2.75rem;
+}
+
+@media (min-width: 900px) {
+  .landing-hero.is-clean {
+    padding: 4.5rem 0 3.25rem;
+  }
+}
+
+.landing-hero-wash.is-soft {
+  background:
+    radial-gradient(
+      ellipse 70% 50% at 15% 0%,
+      color-mix(in srgb, var(--color-teal) 10%, transparent),
+      transparent 58%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-surface) 40%, transparent),
+      transparent 55%
+    );
+}
+
+.landing-page .landing-section {
+  padding: 4.25rem 0;
+}
+
+.landing-page .landing-feature + .landing-feature {
+  padding-top: 3rem;
+}
+
+.landing-page .landing-marquee {
+  padding: 0.7rem 0;
+}
+
+/* Hero Main Vault demo — CSS grid, no overlapping layers */
+.demo-money-os {
+  padding: 0.9rem 1rem 1.05rem;
+  background: var(--color-bg);
+}
+
+.demo-money-os-chrome {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.demo-money-os-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--color-ink);
+}
+
+.demo-money-os-meta {
+  margin: 0.2rem 0 0;
+  font-size: 0.7rem;
+  color: var(--color-muted);
+}
+
+.demo-money-os-cta {
+  border-radius: 999px;
+  background: var(--color-teal);
+  color: #0b0f0e;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.demo-money-os-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(9.5rem, 1.15fr) minmax(0, 1fr);
+  grid-template-areas:
+    'a hub b'
+    '. c .';
+  gap: 0.65rem 0.75rem;
+  align-items: center;
+  justify-items: stretch;
+  border-radius: 1.1rem;
+  border: 1px solid var(--color-line);
+  background:
+    radial-gradient(
+      ellipse 50% 40% at 50% 42%,
+      color-mix(in srgb, var(--color-teal) 7%, transparent),
+      transparent 70%
+    ),
+    color-mix(in srgb, var(--color-surface) 75%, var(--color-bg));
+  padding: 1rem 0.85rem 1.05rem;
+}
+
+.demo-money-os-node.is-a {
+  grid-area: a;
+  justify-self: end;
   max-width: 9rem;
-  height: 1.35rem;
-  margin: 0.35rem 0 0.15rem;
+  width: 100%;
+}
+
+.demo-money-os-node.is-b {
+  grid-area: b;
+  justify-self: start;
+  max-width: 9rem;
+  width: 100%;
+}
+
+.demo-money-os-node.is-c {
+  grid-area: c;
+  justify-self: center;
+  max-width: 9rem;
+  width: 100%;
+}
+
+.demo-money-os-hub {
+  grid-area: hub;
+  width: 100%;
+  max-width: 12.5rem;
+  justify-self: center;
+  border-radius: 1rem;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  padding: 0.9rem 0.95rem 0.85rem;
+  text-align: center;
+  box-shadow: 0 14px 32px -26px color-mix(in srgb, var(--color-ink) 45%, transparent);
+}
+
+.demo-money-os-value {
+  margin: 0.35rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--color-ink);
+}
+
+.demo-money-os-value span {
+  margin-left: 0.25rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--color-muted);
+}
+
+.demo-money-os-sub,
+.demo-money-os-avail {
+  margin: 0.28rem 0 0;
+  font-size: 0.625rem;
+  color: var(--color-muted);
+  line-height: 1.35;
+}
+
+.demo-money-os-open {
+  display: inline-flex;
+  margin-top: 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-line-strong);
+  padding: 0.3rem 0.7rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.demo-money-os-node {
+  border-radius: 0.85rem;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  padding: 0.55rem 0.65rem 0.65rem;
+  text-align: left;
+}
+
+.demo-money-os-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-line);
+  padding: 0.1rem 0.4rem 0.1rem 0.3rem;
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.demo-money-os-pill.is-on {
+  border-color: color-mix(in srgb, var(--color-teal) 40%, var(--color-line));
+  color: var(--color-teal-deep);
+  background: color-mix(in srgb, var(--color-teal) 10%, transparent);
+}
+
+html.dark .demo-money-os-pill.is-on {
+  color: var(--color-teal);
+}
+
+.demo-money-os-node-title {
+  margin: 0.4rem 0 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.demo-money-os-node-detail {
+  margin: 0.15rem 0 0;
+  font-size: 0.625rem;
+  color: var(--color-muted);
+}
+
+.demo-money-os.is-playing .demo-pop {
+  animation: demo-pop-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--d, 0s);
+}
+
+@media (max-width: 560px) {
+  .demo-money-os-stage {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'hub'
+      'a'
+      'b'
+      'c';
+    justify-items: stretch;
+  }
+
+  .demo-money-os-node.is-a,
+  .demo-money-os-node.is-b,
+  .demo-money-os-node.is-c,
+  .demo-money-os-hub {
+    max-width: none;
+    justify-self: stretch;
+  }
 }

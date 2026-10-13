@@ -55,12 +55,18 @@ const ACCOUNT_ABI = [
   'function splitToken() view returns (address)',
   'function accounted(address token) view returns (uint256)',
   'function processToken(address token_) returns (uint256)',
+  'function recurringCount() view returns (uint256)',
+  'function recurringAt(uint256 ruleId) view returns (address token, address to, uint256 amount, uint256 interval, uint256 lastExecuted, bool enabled)',
+  'function executeRecurringAt(uint256 ruleId) returns (uint256)',
   'function recurringEnabled() view returns (bool)',
   'function recurringToken() view returns (address)',
   'function recurringAmount() view returns (uint256)',
   'function recurringInterval() view returns (uint256)',
   'function recurringLastExecuted() view returns (uint256)',
   'function executeRecurring() returns (uint256)',
+  'function dcaCount() view returns (uint256)',
+  'function dcaAt(uint256 ruleId) view returns (address tokenIn, address tokenOut, address router, uint256 amount, uint256 interval, uint256 lastExecuted, uint256 minOut, bool enabled)',
+  'function executeDcaAt(uint256 ruleId) returns (uint256)',
   'function dcaEnabled() view returns (bool)',
   'function dcaToken() view returns (address)',
   'function dcaTokenOut() view returns (address)',
@@ -170,6 +176,26 @@ function atUtcTime(hour, minute, now = new Date(), windowMinutes = 20) {
   return delta < windowMinutes
 }
 
+function isSoftGatedTrigger(trigger) {
+  const t = trigger?.type
+  return (
+    t === 'time_window' ||
+    t === 'usdc_above' ||
+    t === 'eth_price_below' ||
+    t === 'eth_price_above'
+  )
+}
+
+/** Parse "$3,500.50" / "3500" safely for soft gates. */
+function parseUsdNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : NaN
+  const cleaned = String(value ?? '')
+    .replace(/[$,\s]/g, '')
+    .trim()
+  if (!cleaned) return NaN
+  return Number(cleaned)
+}
+
 function passesTriggerGates(trigger, ctx) {
   if (!trigger?.type) return true
   const t = trigger.type
@@ -183,20 +209,20 @@ function passesTriggerGates(trigger, ctx) {
   }
 
   if (t === 'usdc_above') {
-    const floor = Number(trigger.amount)
+    const floor = parseUsdNumber(trigger.amount)
     if (!Number.isFinite(floor)) return true
-    return ctx.usdcHuman >= floor
+    return Number(ctx.usdcHuman || 0) >= floor
   }
 
   if (t === 'eth_price_below') {
-    const px = Number(trigger.priceUsd)
+    const px = parseUsdNumber(trigger.priceUsd)
     if (!Number.isFinite(px) || px <= 0) return true
     if (!(ctx.ethPriceUsd > 0)) return false
     return ctx.ethPriceUsd <= px
   }
 
   if (t === 'eth_price_above') {
-    const px = Number(trigger.priceUsd)
+    const px = parseUsdNumber(trigger.priceUsd)
     if (!Number.isFinite(px) || px <= 0) return true
     if (!(ctx.ethPriceUsd > 0)) return false
     return ctx.ethPriceUsd >= px
@@ -206,62 +232,165 @@ function passesTriggerGates(trigger, ctx) {
 }
 
 let ethPriceCache = { at: 0, usd: 0 }
+let ethPriceLastWarnAt = 0
 
+async function fetchJson(url, timeoutMs = 8_000) {
+  const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+/** Multi-source ETH/USD — CoinGecko alone is flaky (rate limits / DNS). */
 async function fetchEthPriceUsd() {
   const now = Date.now()
+  // Fresh cache
   if (ethPriceCache.usd > 0 && now - ethPriceCache.at < 60_000) {
     return ethPriceCache.usd
   }
-  try {
-    const res = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd',
-      { signal: AbortSignal.timeout(8_000) },
-    )
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const json = await res.json()
-    const usd = Number(json?.ethereum?.usd || 0)
-    if (usd > 0) {
-      ethPriceCache = { at: now, usd }
-      return usd
+
+  const sources = [
+    {
+      name: 'coinbase',
+      read: async () => {
+        const json = await fetchJson(
+          'https://api.coinbase.com/v2/prices/ETH-USD/spot',
+        )
+        return Number(json?.data?.amount || 0)
+      },
+    },
+    {
+      name: 'binance',
+      read: async () => {
+        const json = await fetchJson(
+          'https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT',
+        )
+        return Number(json?.price || 0)
+      },
+    },
+    {
+      name: 'defillama',
+      read: async () => {
+        const json = await fetchJson(
+          'https://coins.llama.fi/prices/current/coingecko:ethereum',
+        )
+        return Number(json?.coins?.['coingecko:ethereum']?.price || 0)
+      },
+    },
+    {
+      name: 'coingecko',
+      read: async () => {
+        const json = await fetchJson(
+          'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd',
+        )
+        return Number(json?.ethereum?.usd || 0)
+      },
+    },
+  ]
+
+  const errors = []
+  for (const src of sources) {
+    try {
+      const usd = await src.read()
+      if (usd > 0 && Number.isFinite(usd)) {
+        ethPriceCache = { at: now, usd }
+        return usd
+      }
+    } catch (err) {
+      errors.push(`${src.name}: ${err.message || err}`)
     }
-  } catch (err) {
-    console.warn('eth price:', err.message || err)
   }
-  return ethPriceCache.usd || 0
+
+  // Stale cache still usable for gates (up to 30m)
+  if (ethPriceCache.usd > 0 && now - ethPriceCache.at < 30 * 60_000) {
+    if (now - ethPriceLastWarnAt > 60_000) {
+      ethPriceLastWarnAt = now
+      console.warn(
+        `eth price: using stale $${ethPriceCache.usd} (${Math.round((now - ethPriceCache.at) / 1000)}s old); fetch failed: ${errors.join(' | ')}`,
+      )
+    }
+    return ethPriceCache.usd
+  }
+
+  if (now - ethPriceLastWarnAt > 60_000) {
+    ethPriceLastWarnAt = now
+    console.warn('eth price: unavailable —', errors.join(' | ') || 'no sources')
+  }
+  return 0
 }
 
 /**
  * Soft gates from enabled Supabase rows for this vault+kind.
- * If any enabled row fails its gate, block execution (AND across enabled gated rows).
- * Ungated rows (every_interval / receive_*) always pass.
  */
-async function loadEnabledTriggers(supabase, vaultAddr, kind) {
+async function loadEnabledRows(supabase, vaultAddr, kind) {
   if (!supabase) return []
   try {
     const { data, error } = await supabase
       .from('automations')
-      .select('enabled, vault_address, action_config, trigger_config')
+      .select('id, enabled, vault_address, action_config, trigger_config')
       .eq('enabled', true)
 
     if (error) throw error
     const vault = String(vaultAddr || '').trim().toLowerCase()
-    return (data || [])
-      .filter((row) => {
-        if (String(row.vault_address || '').trim().toLowerCase() !== vault) return false
-        return classifyAutomationKind(row) === kind
-      })
-      .map((row) => row.trigger_config || {})
+    return (data || []).filter((row) => {
+      if (String(row.vault_address || '').trim().toLowerCase() !== vault) return false
+      return classifyAutomationKind(row) === kind
+    })
   } catch (err) {
     console.warn('trigger gates:', err.message || err)
     return []
   }
 }
 
+async function loadEnabledTriggers(supabase, vaultAddr, kind) {
+  const rows = await loadEnabledRows(supabase, vaultAddr, kind)
+  return rows.map((row) => row.trigger_config || {})
+}
+
+function rowForRuleId(rows, ruleId) {
+  if (ruleId == null) return null
+  const id = Number(ruleId)
+  return (
+    rows.find((row) => Number(row.action_config?.ruleId) === id) || null
+  )
+}
+
+/**
+ * Soft gates for on-chain execute.
+ * If any enabled rule uses a soft gate (ETH price / USDC floor / time),
+ * require at least one of those gated rules to pass — ungated every_interval
+ * rows must not bypass price gates on the shared on-chain slot.
+ */
 async function softGatesAllow(supabase, vaultAddr, kind, ctx) {
   const triggers = await loadEnabledTriggers(supabase, vaultAddr, kind)
   if (!triggers.length) return true
-  // If at least one enabled rule's gates pass, allow (OR) — matches soft-pause OR of enabled
-  return triggers.some((t) => passesTriggerGates(t, ctx))
+
+  const gated = triggers.filter(isSoftGatedTrigger)
+  const relevant = gated.length ? gated : triggers
+  const ok = relevant.some((t) => passesTriggerGates(t, ctx))
+
+  if (!ok && gated.length) {
+    const ethGates = gated.filter(
+      (t) => t.type === 'eth_price_below' || t.type === 'eth_price_above',
+    )
+    if (ethGates.length) {
+      const sample = ethGates[0]
+      const px = Number(sample.priceUsd)
+      console.log(
+        `gate block ${String(vaultAddr).slice(0, 10)}… ${kind}: ETH $${ctx.ethPriceUsd || 0} vs ${sample.type} $${px || '?'}`,
+      )
+    }
+  }
+
+  return ok
+}
+
+async function vaultUsdcHuman(usdc, vaultAddr) {
+  try {
+    const usdcBal = await usdc.balanceOf(vaultAddr)
+    return Number(usdcBal) / 1e6
+  } catch {
+    return 0
+  }
 }
 
 async function maybeExecuteRecurring(
@@ -275,45 +404,100 @@ async function maybeExecuteRecurring(
 ) {
   try {
     if (softPaused) return
-    const enabled = await vault.recurringEnabled()
-    if (!enabled) return
 
-    const tokenAddr = await vault.recurringToken()
-    if (!tokenAddr || tokenAddr === '0x0000000000000000000000000000000000000000') {
-      return
-    }
-
-    const amount = await vault.recurringAmount()
-    if (amount === 0n) return
-
-    const token = new Contract(tokenAddr, ERC20_ABI, wallet.provider)
-    const bal = await token.balanceOf(vaultAddr)
-    if (bal < amount) return
-
-    const interval = await vault.recurringInterval()
-    const last = await vault.recurringLastExecuted()
-    const now = BigInt(Math.floor(Date.now() / 1000))
-    if (last !== 0n && now < last + interval) return
-
-    let usdcHuman = 0
+    let count = null
     try {
-      const usdcBal = await usdc.balanceOf(vaultAddr)
-      usdcHuman = Number(usdcBal) / 1e6
+      count = Number(await vault.recurringCount())
     } catch {
-      /* ignore */
+      count = null
     }
 
-    const gateCtx = { ...ctx, usdcHuman }
-    if (!(await softGatesAllow(supabase, vaultAddr, 'recurring', gateCtx))) {
+    // Legacy single-slot vault
+    if (count == null) {
+      const enabled = await vault.recurringEnabled()
+      if (!enabled) return
+
+      const tokenAddr = await vault.recurringToken()
+      if (!tokenAddr || tokenAddr === '0x0000000000000000000000000000000000000000') {
+        return
+      }
+
+      const amount = await vault.recurringAmount()
+      if (amount === 0n) return
+
+      const token = new Contract(tokenAddr, ERC20_ABI, wallet.provider)
+      const bal = await token.balanceOf(vaultAddr)
+      if (bal < amount) return
+
+      const interval = await vault.recurringInterval()
+      const last = await vault.recurringLastExecuted()
+      const now = BigInt(Math.floor(Date.now() / 1000))
+      if (last !== 0n && now < last + interval) return
+
+      const gateCtx = { ...ctx, usdcHuman: await vaultUsdcHuman(usdc, vaultAddr) }
+      if (!(await softGatesAllow(supabase, vaultAddr, 'recurring', gateCtx))) {
+        return
+      }
+
+      const connected = vault.connect(wallet)
+      const tx = await connected.executeRecurring()
+      const receipt = await tx.wait()
+      console.log(
+        `recurring ${vaultAddr} token=${tokenAddr} amount=${amount.toString()} tx=${receipt.hash}`,
+      )
       return
     }
 
+    const rows = await loadEnabledRows(supabase, vaultAddr, 'recurring')
+    const usdcHuman = await vaultUsdcHuman(usdc, vaultAddr)
+    const gateCtx = { ...ctx, usdcHuman }
     const connected = vault.connect(wallet)
-    const tx = await connected.executeRecurring()
-    const receipt = await tx.wait()
-    console.log(
-      `recurring ${vaultAddr} token=${tokenAddr} amount=${amount.toString()} tx=${receipt.hash}`,
-    )
+    const now = BigInt(Math.floor(Date.now() / 1000))
+
+    for (let ruleId = 0; ruleId < count; ruleId++) {
+      try {
+        const [tokenAddr, , amount, interval, last, enabled] =
+          await vault.recurringAt(ruleId)
+        if (!enabled || amount === 0n) continue
+        if (
+          !tokenAddr ||
+          tokenAddr === '0x0000000000000000000000000000000000000000'
+        ) {
+          continue
+        }
+        if (last !== 0n && now < last + interval) continue
+
+        const row = rowForRuleId(rows, ruleId)
+        if (rows.length && !row) continue
+        if (row) {
+          if (!passesTriggerGates(row.trigger_config || {}, gateCtx)) continue
+        } else if (!(await softGatesAllow(supabase, vaultAddr, 'recurring', gateCtx))) {
+          continue
+        }
+
+        const token = new Contract(tokenAddr, ERC20_ABI, wallet.provider)
+        const bal = await token.balanceOf(vaultAddr)
+        if (bal < amount) continue
+
+        const tx = await connected.executeRecurringAt(ruleId)
+        const receipt = await tx.wait()
+        console.log(
+          `recurring ${vaultAddr}#${ruleId} token=${tokenAddr} amount=${amount.toString()} tx=${receipt.hash}`,
+        )
+      } catch (err) {
+        const msg = err?.shortMessage || err?.message || String(err)
+        if (
+          /RecurringNotDue|RecurringDisabled|InsufficientBalance|InvalidRule/i.test(
+            msg,
+          )
+        ) {
+          continue
+        }
+        if (!/execution reverted/i.test(msg)) {
+          console.warn(`recurring ${vaultAddr}#${ruleId}:`, msg)
+        }
+      }
+    }
   } catch (err) {
     const msg = err?.shortMessage || err?.message || String(err)
     if (/recurringEnabled|RecurringNotDue|RecurringDisabled|InsufficientBalance/i.test(msg)) {
@@ -336,59 +520,128 @@ async function maybeExecuteDca(
 ) {
   try {
     if (softPaused) return
-    const enabled = await vault.dcaEnabled()
-    if (!enabled) return
 
-    const amount = await vault.dcaAmount()
-    if (amount === 0n) return
-
-    const tokenOut = await vault.dcaTokenOut()
-    const tokenIn = await vault.dcaToken()
-    const toEth =
-      !tokenOut || tokenOut === '0x0000000000000000000000000000000000000000'
-    const fromEth =
-      !tokenIn || tokenIn === '0x0000000000000000000000000000000000000000'
-
-    let usdcHuman = 0
+    let count = null
     try {
-      const usdcBal = await usdc.balanceOf(vaultAddr)
-      usdcHuman = Number(usdcBal) / 1e6
+      count = Number(await vault.dcaCount())
     } catch {
-      /* ignore */
+      count = null
     }
 
-    if (toEth) {
-      // Sell ERC-20 → ETH (tokenIn must be set)
-      if (fromEth) return
-      const erc20 = new Contract(tokenIn, ERC20_ABI, wallet.provider)
-      const bal = await erc20.balanceOf(vaultAddr)
-      if (bal < amount) return
-    } else {
-      // Buy token with vault ETH (tokenIn must be zero)
-      if (!fromEth) return
-      const ethBal = await wallet.provider.getBalance(vaultAddr)
-      if (ethBal < amount) return
-    }
+    // Legacy single-slot vault
+    if (count == null) {
+      const enabled = await vault.dcaEnabled()
+      if (!enabled) return
 
-    const interval = await vault.dcaInterval()
-    const last = await vault.dcaLastExecuted()
-    const now = BigInt(Math.floor(Date.now() / 1000))
-    if (last !== 0n && now < last + interval) return
+      const amount = await vault.dcaAmount()
+      if (amount === 0n) return
 
-    const gateCtx = { ...ctx, usdcHuman }
-    if (!(await softGatesAllow(supabase, vaultAddr, 'dca', gateCtx))) {
+      const tokenOut = await vault.dcaTokenOut()
+      const tokenIn = await vault.dcaToken()
+      const toEth =
+        !tokenOut || tokenOut === '0x0000000000000000000000000000000000000000'
+      const fromEth =
+        !tokenIn || tokenIn === '0x0000000000000000000000000000000000000000'
+
+      const usdcHuman = await vaultUsdcHuman(usdc, vaultAddr)
+
+      if (toEth) {
+        if (fromEth) return
+        const erc20 = new Contract(tokenIn, ERC20_ABI, wallet.provider)
+        const bal = await erc20.balanceOf(vaultAddr)
+        if (bal < amount) return
+      } else {
+        if (!fromEth) return
+        const ethBal = await wallet.provider.getBalance(vaultAddr)
+        if (ethBal < amount) return
+      }
+
+      const interval = await vault.dcaInterval()
+      const last = await vault.dcaLastExecuted()
+      const now = BigInt(Math.floor(Date.now() / 1000))
+      if (last !== 0n && now < last + interval) return
+
+      const gateCtx = { ...ctx, usdcHuman }
+      if (!(await softGatesAllow(supabase, vaultAddr, 'dca', gateCtx))) {
+        return
+      }
+
+      const connected = vault.connect(wallet)
+      const tx = await connected.executeDca()
+      const receipt = await tx.wait()
+      const mode = toEth
+        ? `${tokenIn.slice(0, 8)}→ETH`
+        : `ETH→${tokenOut.slice(0, 8)}`
+      console.log(
+        `dca ${vaultAddr} ${mode} amountIn=${amount.toString()} tx=${receipt.hash}`,
+      )
       return
     }
 
+    const rows = await loadEnabledRows(supabase, vaultAddr, 'dca')
+    const usdcHuman = await vaultUsdcHuman(usdc, vaultAddr)
+    const gateCtx = { ...ctx, usdcHuman }
     const connected = vault.connect(wallet)
-    const tx = await connected.executeDca()
-    const receipt = await tx.wait()
-    const mode = toEth
-      ? `${tokenIn.slice(0, 8)}→ETH`
-      : `ETH→${tokenOut.slice(0, 8)}`
-    console.log(
-      `dca ${vaultAddr} ${mode} amountIn=${amount.toString()} tx=${receipt.hash}`,
-    )
+    const now = BigInt(Math.floor(Date.now() / 1000))
+
+    for (let ruleId = 0; ruleId < count; ruleId++) {
+      try {
+        const [tokenIn, tokenOut, , amount, interval, last, , enabled] =
+          await vault.dcaAt(ruleId)
+        if (!enabled || amount === 0n) continue
+        if (last !== 0n && now < last + interval) continue
+
+        const row = rowForRuleId(rows, ruleId)
+        if (rows.length && !row) continue
+        if (row) {
+          if (!passesTriggerGates(row.trigger_config || {}, gateCtx)) continue
+        } else if (!(await softGatesAllow(supabase, vaultAddr, 'dca', gateCtx))) {
+          continue
+        }
+
+        const toEth =
+          !tokenOut || tokenOut === '0x0000000000000000000000000000000000000000'
+        const fromEth =
+          !tokenIn || tokenIn === '0x0000000000000000000000000000000000000000'
+
+        if (toEth) {
+          if (fromEth) continue
+          const erc20 = new Contract(tokenIn, ERC20_ABI, wallet.provider)
+          const bal = await erc20.balanceOf(vaultAddr)
+          if (bal < amount) continue
+        } else {
+          if (!fromEth) continue
+          const ethBal = await wallet.provider.getBalance(vaultAddr)
+          if (ethBal < amount) continue
+        }
+
+        const tx = await connected.executeDcaAt(ruleId)
+        const receipt = await tx.wait()
+        const mode = toEth
+          ? `${String(tokenIn).slice(0, 8)}→ETH`
+          : `ETH→${String(tokenOut).slice(0, 8)}`
+        console.log(
+          `dca ${vaultAddr}#${ruleId} ${mode} amountIn=${amount.toString()} tx=${receipt.hash}`,
+        )
+      } catch (err) {
+        const msg = err?.shortMessage || err?.message || String(err)
+        if (
+          /DcaNotDue|DcaDisabled|InsufficientBalance|InsufficientLiquidity|NoTokenMarket|InvalidAmount|InvalidRule/i.test(
+            msg,
+          )
+        ) {
+          if (/NoTokenMarket|InsufficientLiquidity/i.test(msg)) {
+            console.warn(
+              `dca ${vaultAddr}#${ruleId}: no market/liquidity — ${msg}`,
+            )
+          }
+          continue
+        }
+        if (!/execution reverted/i.test(msg)) {
+          console.warn(`dca ${vaultAddr}#${ruleId}:`, msg)
+        }
+      }
+    }
   } catch (err) {
     const msg = err?.shortMessage || err?.message || String(err)
     if (
@@ -428,7 +681,9 @@ function classifyAutomationKind(row) {
     type === 'bridge_relay' ||
     trigger.type === 'every_interval' ||
     trigger.type === 'time_window' ||
-    trigger.type === 'usdc_above'
+    trigger.type === 'usdc_above' ||
+    trigger.type === 'eth_price_below' ||
+    trigger.type === 'eth_price_above'
   ) {
     return 'recurring'
   }
@@ -625,6 +880,12 @@ async function main() {
       const ethPriceUsd = await fetchEthPriceUsd()
       const hourUtc = new Date().getUTCHours()
       const gateBase = { ethPriceUsd, hourUtc, now: new Date() }
+      if (ethPriceUsd > 0) {
+        // Occasional heartbeat so price gates are easy to debug
+        if (Math.floor(Date.now() / POLL_MS) % 4 === 0) {
+          console.log(`eth $${ethPriceUsd}`)
+        }
+      }
 
       const count = Number(await factory.accountCount())
       for (let i = 0; i < count; i++) {

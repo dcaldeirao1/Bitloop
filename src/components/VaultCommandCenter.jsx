@@ -8,8 +8,6 @@ import {
   getReservedFunds,
 } from '../lib/automationBlocks'
 import { truncateAddress } from '../lib/automations'
-import { getBalanceSeries } from '../lib/balanceSeries'
-import { Sparkline } from './Sparkline'
 
 function trimAmt(value, maxDecimals = 4) {
   const n = Number(value)
@@ -103,14 +101,6 @@ export function VaultCommandCenter({
     : balances
       ? trimAmt(balances.vaultEthFormatted, 5)
       : '—'
-
-  const usdcSeries = useMemo(
-    () =>
-      getBalanceSeries(vault, 'usdc', {
-        current: balances?.vaultUsdcFormatted,
-      }),
-    [vault, balances?.vaultUsdcFormatted],
-  )
 
   const reserved = useMemo(
     () => getReservedFunds(rules, balances),
@@ -299,7 +289,6 @@ export function VaultCommandCenter({
             {usdc}
             <span>USDC</span>
           </p>
-          <Sparkline values={usdcSeries} width={140} height={22} className="money-os-spark" />
           <p className="money-os-vault-sub">
             {eth} ETH
             {vault ? (

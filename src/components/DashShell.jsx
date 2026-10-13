@@ -107,7 +107,10 @@ export function DashShell({
           ) : null}
           {onNew ? (
             <button type="button" className="dash-chip is-active" disabled>
-              New rule
+              {location.search.includes('type=spot') ||
+              location.search.includes('type=perps')
+                ? 'New strategy'
+                : 'New rule'}
             </button>
           ) : null}
         </div>

@@ -53,6 +53,12 @@ export const ACCOUNT_ABI = [
   'function accounted(address token) view returns (uint256)',
   'function setSplit(address token_, address savings_, uint16 bps_, bool enabled_)',
   'function processToken(address token_) returns (uint256)',
+  'function recurringCount() view returns (uint256)',
+  'function recurringAt(uint256 ruleId) view returns (address token, address to, uint256 amount, uint256 interval, uint256 lastExecuted, bool enabled)',
+  'function addRecurring(address token_, address to_, uint256 amount_, uint256 interval_) returns (uint256 ruleId)',
+  'function setRecurringAt(uint256 ruleId, address token_, address to_, uint256 amount_, uint256 interval_, bool enabled_)',
+  'function setRecurringEnabled(uint256 ruleId, bool enabled_)',
+  'function executeRecurringAt(uint256 ruleId) returns (uint256)',
   'function recurringToken() view returns (address)',
   'function recurringTo() view returns (address)',
   'function recurringAmount() view returns (uint256)',
@@ -61,6 +67,12 @@ export const ACCOUNT_ABI = [
   'function recurringEnabled() view returns (bool)',
   'function setRecurring(address token_, address to_, uint256 amount_, uint256 interval_, bool enabled_)',
   'function executeRecurring() returns (uint256)',
+  'function dcaCount() view returns (uint256)',
+  'function dcaAt(uint256 ruleId) view returns (address tokenIn, address tokenOut, address router, uint256 amount, uint256 interval, uint256 lastExecuted, uint256 minOut, bool enabled)',
+  'function addDca(address tokenIn_, address tokenOut_, address router_, uint256 amount_, uint256 interval_, uint256 minOut_) returns (uint256 ruleId)',
+  'function setDcaAt(uint256 ruleId, address tokenIn_, address tokenOut_, address router_, uint256 amount_, uint256 interval_, uint256 minOut_, bool enabled_)',
+  'function setDcaEnabled(uint256 ruleId, bool enabled_)',
+  'function executeDcaAt(uint256 ruleId) returns (uint256)',
   'function dcaToken() view returns (address)',
   'function dcaTokenOut() view returns (address)',
   'function dcaRouter() view returns (address)',
@@ -75,13 +87,26 @@ export const ACCOUNT_ABI = [
   'function withdraw(address to, uint256 amount)',
   'event TokenSplit(address indexed token, uint256 incoming, uint256 sentToSavings, address indexed caller)',
   'event SplitConfigured(address indexed token, address indexed savings, uint16 bps, bool enabled)',
-  'event RecurringConfigured(address indexed token, address indexed to, uint256 amount, uint256 interval, bool enabled)',
-  'event RecurringExecuted(address indexed token, address indexed to, uint256 amount, address indexed caller)',
-  'event DcaConfigured(address indexed tokenIn, address indexed tokenOut, address router, uint256 amount, uint256 interval, uint256 minOut, bool enabled)',
-  'event DcaExecuted(address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut, address indexed caller)',
+  'event RecurringConfigured(uint256 indexed ruleId, address indexed token, address indexed to, uint256 amount, uint256 interval, bool enabled)',
+  'event RecurringExecuted(uint256 indexed ruleId, address indexed token, address indexed to, uint256 amount, address caller)',
+  'event DcaConfigured(uint256 indexed ruleId, address indexed tokenIn, address indexed tokenOut, address router, uint256 amount, uint256 interval, uint256 minOut, bool enabled)',
+  'event DcaExecuted(uint256 indexed ruleId, address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut, address caller)',
   'event EthReceived(address indexed from, uint256 amount, uint256 sentToSavings)',
   'event OwnershipTransferred(address indexed previousOwner, address indexed newOwner)',
 ]
+
+/** Detect multi-slot vaults (new SmartAccount). Old single-slot vaults lack dcaCount. */
+export async function supportsMultiRules(vaultAddress, runner) {
+  try {
+    const account =
+      runner ||
+      new Contract(vaultAddress, ACCOUNT_ABI, getReadProvider())
+    await account.dcaCount()
+    return true
+  } catch {
+    return false
+  }
+}
 
 export const ERC20_ABI = [
   'function balanceOf(address account) view returns (uint256)',
@@ -255,25 +280,30 @@ export async function setupUsdcRecurringAutomation({
   const amount = parseUnits(String(amountHuman), decimals)
   const interval = intervalToSeconds(intervalValue, intervalUnit)
 
-  const tx = await account.setRecurring(
-    getAddress(SEPOLIA_USDC),
-    getAddress(toAddress),
-    amount,
-    interval,
-    true,
-  )
-  await tx.wait()
+  const token = getAddress(SEPOLIA_USDC)
+  const to = getAddress(toAddress)
+  const multi = await supportsMultiRules(vault, account)
+  let ruleId = null
+  if (multi) {
+    ruleId = Number(await account.addRecurring.staticCall(token, to, amount, interval))
+    const tx = await account.addRecurring(token, to, amount, interval)
+    await tx.wait()
+  } else {
+    const tx = await account.setRecurring(token, to, amount, interval, true)
+    await tx.wait()
+  }
 
   return {
     vaultAddress: vault,
-    token: getAddress(SEPOLIA_USDC),
-    toAddress: getAddress(toAddress),
+    token,
+    toAddress: to,
     amount: amount.toString(),
     amountHuman: String(amountHuman),
     decimals,
     interval,
     intervalValue: Number(intervalValue),
     intervalUnit,
+    ruleId,
   }
 }
 
@@ -356,20 +386,23 @@ export async function setupRelayBridgeAutomation({
 
   const account = new Contract(vault, ACCOUNT_ABI, signer)
   const interval = intervalToSeconds(intervalValue, intervalUnit)
-  const tx = await account.setRecurring(
-    token,
-    getAddress(depositAddress),
-    amount,
-    interval,
-    true,
-  )
-  await tx.wait()
+  const to = getAddress(depositAddress)
+  const multi = await supportsMultiRules(vault, account)
+  let ruleId = null
+  if (multi) {
+    ruleId = Number(await account.addRecurring.staticCall(token, to, amount, interval))
+    const tx = await account.addRecurring(token, to, amount, interval)
+    await tx.wait()
+  } else {
+    const tx = await account.setRecurring(token, to, amount, interval, true)
+    await tx.wait()
+  }
 
   return {
     vaultAddress: vault,
     token,
-    toAddress: getAddress(depositAddress),
-    depositAddress: getAddress(depositAddress),
+    toAddress: to,
+    depositAddress: to,
     recipient: toRecipient,
     amount: amount.toString(),
     amountHuman: String(amountHuman),
@@ -377,6 +410,7 @@ export async function setupRelayBridgeAutomation({
     interval,
     intervalValue: Number(intervalValue),
     intervalUnit,
+    ruleId,
     originChainId: origin,
     destinationChainId: destination,
     originCurrency,
@@ -406,10 +440,16 @@ function isAddressLike(value) {
 export async function setRecurringEnabled(
   vaultAddress,
   enabled,
-  { token, to, amountHuman, interval, decimals = 6 },
+  { token, to, amountHuman, interval, decimals = 6, ruleId = null },
 ) {
   const signer = await getSigner()
   const account = new Contract(vaultAddress, ACCOUNT_ABI, signer)
+  const multi = await supportsMultiRules(vaultAddress, account)
+  if (multi && ruleId != null && Number.isFinite(Number(ruleId))) {
+    const tx = await account.setRecurringEnabled(Number(ruleId), Boolean(enabled))
+    await tx.wait()
+    return
+  }
   const amount = parseUnits(String(amountHuman), decimals)
   const tx = await account.setRecurring(
     getAddress(token || SEPOLIA_USDC),
@@ -525,16 +565,26 @@ export async function setupUsdcDcaAutomation({
     tokenIn = ZERO
   }
 
-  const tx = await account.setDca(
-    tokenIn,
-    out,
-    router,
-    amount,
-    interval,
-    minOut,
-    true,
-  )
-  await tx.wait()
+  const multi = await supportsMultiRules(vault, account)
+  let ruleId = null
+  if (multi) {
+    ruleId = Number(
+      await account.addDca.staticCall(tokenIn, out, router, amount, interval, minOut),
+    )
+    const tx = await account.addDca(tokenIn, out, router, amount, interval, minOut)
+    await tx.wait()
+  } else {
+    const tx = await account.setDca(
+      tokenIn,
+      out,
+      router,
+      amount,
+      interval,
+      minOut,
+      true,
+    )
+    await tx.wait()
+  }
 
   return {
     vaultAddress: vault,
@@ -549,6 +599,7 @@ export async function setupUsdcDcaAutomation({
     intervalValue: Number(intervalValue),
     intervalUnit,
     minOut: minOut.toString(),
+    ruleId,
   }
 }
 
@@ -586,16 +637,26 @@ export async function setupSellTokenForEthAutomation({
   const amount = parseUnits(String(amountHuman), decimals)
   const minOut = parseUnits(String(minOutHuman || '0'), 18)
 
-  const tx = await account.setDca(
-    token,
-    ZERO,
-    router,
-    amount,
-    interval,
-    minOut,
-    true,
-  )
-  await tx.wait()
+  const multi = await supportsMultiRules(vault, account)
+  let ruleId = null
+  if (multi) {
+    ruleId = Number(
+      await account.addDca.staticCall(token, ZERO, router, amount, interval, minOut),
+    )
+    const tx = await account.addDca(token, ZERO, router, amount, interval, minOut)
+    await tx.wait()
+  } else {
+    const tx = await account.setDca(
+      token,
+      ZERO,
+      router,
+      amount,
+      interval,
+      minOut,
+      true,
+    )
+    await tx.wait()
+  }
 
   return {
     vaultAddress: vault,
@@ -611,6 +672,7 @@ export async function setupSellTokenForEthAutomation({
     intervalValue: Number(intervalValue),
     intervalUnit,
     minOut: minOut.toString(),
+    ruleId,
   }
 }
 
@@ -632,36 +694,56 @@ export async function setupTokenRecurringAutomation({
   const amount = parseUnits(String(amountHuman), decimals)
   const interval = intervalToSeconds(intervalValue, intervalUnit)
 
-  const tx = await account.setRecurring(
-    token,
-    getAddress(toAddress),
-    amount,
-    interval,
-    true,
-  )
-  await tx.wait()
+  const to = getAddress(toAddress)
+  const multi = await supportsMultiRules(vault, account)
+  let ruleId = null
+  if (multi) {
+    ruleId = Number(await account.addRecurring.staticCall(token, to, amount, interval))
+    const tx = await account.addRecurring(token, to, amount, interval)
+    await tx.wait()
+  } else {
+    const tx = await account.setRecurring(token, to, amount, interval, true)
+    await tx.wait()
+  }
 
   return {
     vaultAddress: vault,
     token,
     tokenSymbol: symbol,
-    toAddress: getAddress(toAddress),
+    toAddress: to,
     amount: amount.toString(),
     amountHuman: String(amountHuman),
     decimals,
     interval,
     intervalValue: Number(intervalValue),
     intervalUnit,
+    ruleId,
   }
 }
 
 export async function setDcaEnabled(
   vaultAddress,
   enabled,
-  { token, tokenOut, router, amountHuman, interval, decimals = 6, minOut = '0', amountAsset },
+  {
+    token,
+    tokenOut,
+    router,
+    amountHuman,
+    interval,
+    decimals = 6,
+    minOut = '0',
+    amountAsset,
+    ruleId = null,
+  },
 ) {
   const signer = await getSigner()
   const account = new Contract(vaultAddress, ACCOUNT_ABI, signer)
+  const multi = await supportsMultiRules(vaultAddress, account)
+  if (multi && ruleId != null && Number.isFinite(Number(ruleId))) {
+    const tx = await account.setDcaEnabled(Number(ruleId), Boolean(enabled))
+    await tx.wait()
+    return
+  }
   const toEth = !tokenOut || tokenOut === ZERO
   const asset = amountAsset || (toEth ? 'USDC' : 'ETH')
   const dec = asset === 'ETH' ? 18 : decimals
@@ -728,6 +810,7 @@ export async function setAutomationOnchainEnabled(rule, enabled) {
       decimals: action.decimals ?? 6,
       minOut: action.minOut || '0',
       amountAsset: action.amountAsset,
+      ruleId: action.ruleId,
     })
     return true
   }
@@ -737,6 +820,7 @@ export async function setAutomationOnchainEnabled(rule, enabled) {
     await setRecurringEnabled(vault, enabled, {
       token,
       to: action.to || action.depositAddress || action.recipient,
+      ruleId: action.ruleId,
       amountHuman: action.amountHuman ?? action.amount,
       interval: action.interval || trigger.interval,
       decimals: action.decimals ?? action.originDecimals ?? 6,
@@ -824,9 +908,45 @@ export async function getVaultConfig(vaultAddress) {
 }
 
 /** On-chain timing for scheduled DCA / recurring automations. */
-export async function getVaultScheduleState(vaultAddress) {
+export async function getVaultScheduleState(vaultAddress, { ruleId = null, kind = null } = {}) {
   const provider = getReadProvider()
   const account = new Contract(vaultAddress, ACCOUNT_ABI, provider)
+
+  const multi = await supportsMultiRules(vaultAddress, account)
+  if (multi && ruleId != null && Number.isFinite(Number(ruleId))) {
+    const id = Number(ruleId)
+    if (kind === 'recurring') {
+      try {
+        const [, , , interval, lastExecuted, enabled] = await account.recurringAt(id)
+        return {
+          dcaEnabled: false,
+          dcaLastExecuted: 0,
+          dcaInterval: 0,
+          recurringEnabled: Boolean(enabled),
+          recurringLastExecuted: Number(lastExecuted),
+          recurringInterval: Number(interval),
+        }
+      } catch {
+        /* fall through */
+      }
+    }
+    if (kind === 'dca' || kind == null) {
+      try {
+        const [, , , , interval, lastExecuted, , enabled] = await account.dcaAt(id)
+        return {
+          dcaEnabled: Boolean(enabled),
+          dcaLastExecuted: Number(lastExecuted),
+          dcaInterval: Number(interval),
+          recurringEnabled: false,
+          recurringLastExecuted: 0,
+          recurringInterval: 0,
+        }
+      } catch {
+        /* fall through */
+      }
+    }
+  }
+
   const [
     dcaEnabled,
     dcaLastExecuted,

@@ -5,8 +5,8 @@ import { Reveal } from '../components/landing/Reveal'
 import {
   DemoActivity,
   DemoBuilder,
+  DemoMoneyOs,
   DemoSpot,
-  DemoVault,
 } from '../components/landing/ProductDemos'
 import { ThemeToggle } from '../components/ThemeToggle'
 
@@ -60,15 +60,6 @@ const FAQS = [
   },
 ]
 
-const PROOF = [
-  'Rules that run your money',
-  'Ethereum · Arbitrum · Base · Robinhood',
-  'Spot strategies (paper)',
-  'Perps: backtest then deploy',
-  'Test before deploy',
-  'Non-custodial',
-]
-
 const PLANS = [
   {
     id: 'free',
@@ -111,7 +102,6 @@ export function Landing() {
     <div className="landing-page min-h-screen bg-bg text-ink">
       <SiteNav />
       <Hero />
-      <ProofMarquee />
       <FeatureStory />
       <HowItWorks />
       <Pricing />
@@ -146,15 +136,8 @@ function SiteNav() {
 
 function Hero() {
   return (
-    <section className="landing-hero">
-      <div className="landing-hero-orbs" aria-hidden="true">
-        <span className="landing-orb is-a" />
-        <span className="landing-orb is-b" />
-        <span className="landing-orb is-c" />
-      </div>
-      <div className="landing-grid-bg landing-hero-grid" aria-hidden="true" />
-      <div className="landing-hero-noise" aria-hidden="true" />
-      <div className="landing-hero-wash" aria-hidden="true" />
+    <section className="landing-hero is-clean">
+      <div className="landing-hero-wash is-soft" aria-hidden="true" />
 
       <div className="landing-hero-inner">
         <div className="landing-hero-copy">
@@ -162,8 +145,8 @@ function Hero() {
             Your money, on autopilot.
           </h1>
           <p className="landing-hero-sub animate-in-late">
-            Rules that save, pay, and trade for you — Trigger → Action → Test →
-            Deploy on Ethereum, Arbitrum, Base, and Robinhood Chain.
+            Build rules that save, pay, and trade — then deploy on Ethereum,
+            Arbitrum, Base, or Robinhood Chain.
           </p>
           <div className="landing-hero-actions animate-in-late">
             <Link to="/app" className="landing-btn-primary">
@@ -176,25 +159,8 @@ function Hero() {
         </div>
 
         <div className="landing-hero-stage animate-in-late">
-          <div className="landing-hero-stage-glow" aria-hidden="true" />
-          <DemoVault />
+          <DemoMoneyOs />
         </div>
-      </div>
-    </section>
-  )
-}
-
-function ProofMarquee() {
-  const loop = [...PROOF, ...PROOF]
-  return (
-    <section className="landing-marquee" aria-label="Product highlights">
-      <div className="landing-marquee-track">
-        {loop.map((item, i) => (
-          <span key={`${item}-${i}`} className="landing-marquee-item">
-            <span className="landing-marquee-dot" />
-            {item}
-          </span>
-        ))}
       </div>
     </section>
   )
@@ -222,11 +188,6 @@ function FeatureStory() {
               On-chain rules on the network you choose. Preview, then deploy to a
               vault you own. Keeper runs while you are offline.
             </p>
-            <ul className="landing-checklist">
-              <li>Ethereum · Arbitrum · Base · Robinhood</li>
-              <li>Deploy to vault after preview</li>
-              <li>Confirmed activity with explorer links</li>
-            </ul>
             <Link to="/app/new?type=save-pay" className="landing-btn-primary mt-8 inline-flex">
               New automation
             </Link>
@@ -246,13 +207,8 @@ function FeatureStory() {
               Trigger when a token matches your filters. Action: buy with TP/SL.
               Paper only — live scan still uses mock funds.
             </p>
-            <ul className="landing-checklist">
-              <li>Environment: Paper</li>
-              <li>Test with paper funds</li>
-              <li>Run live scan (paper)</li>
-            </ul>
             <Link to="/app/new?type=spot" className="landing-btn-primary mt-8 inline-flex">
-              New spot rule
+              New strategy
             </Link>
           </Reveal>
           <Reveal className="landing-feature-visual" delay={60} threshold={0.05}>
@@ -270,13 +226,8 @@ function FeatureStory() {
               Tune MA / RSI signals on history, then deploy the same parameters on
               Hyperliquid. You confirm every live order.
             </p>
-            <ul className="landing-checklist">
-              <li>Environment: Hyperliquid</li>
-              <li>Backtest first</li>
-              <li>Deploy strategy</li>
-            </ul>
             <Link to="/app/new?type=perps" className="landing-btn-primary mt-8 inline-flex">
-              New perps rule
+              New strategy
             </Link>
           </Reveal>
           <Reveal className="landing-feature-visual" delay={60} threshold={0.05}>
@@ -311,13 +262,6 @@ function HowItWorks() {
           ))}
         </ol>
 
-        <Reveal delay={280}>
-          <div className="landing-rule-row">
-            <span className="landing-rule-chip">Receive USDC → split 20%</span>
-            <span className="landing-rule-chip">Token filters → paper buy</span>
-            <span className="landing-rule-chip">MA/RSI → manual perps</span>
-          </div>
-        </Reveal>
       </div>
     </section>
   )

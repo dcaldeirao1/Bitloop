@@ -10,7 +10,81 @@ export function DemoFrame({ children, caption }) {
   )
 }
 
-/** Vault dashboard — hero product stage. */
+/**
+ * Main Vault flow — clean grid layout (no overlapping absolutes).
+ */
+export function DemoMoneyOs() {
+  const { ref, inView } = useInView({ once: false, threshold: 0.08 })
+
+  return (
+    <DemoFrame>
+      <div
+        ref={ref}
+        className={`demo-money-os ${inView ? 'is-playing' : ''}`}
+        aria-hidden="true"
+      >
+        <header className="demo-money-os-chrome demo-pop" style={{ '--d': '0.04s' }}>
+          <div>
+            <p className="demo-money-os-title">Main Vault</p>
+            <p className="demo-money-os-meta">2 active · 3 connected</p>
+          </div>
+          <span className="demo-money-os-cta">New rule</span>
+        </header>
+
+        <div className="demo-money-os-stage">
+          <DemoOsNode
+            className="is-a demo-pop"
+            style={{ '--d': '0.16s' }}
+            status="Due"
+            tone="is-on"
+            title="Buy ETH"
+            detail="10 USDC → ETH"
+          />
+          <div className="demo-money-os-hub demo-pop" style={{ '--d': '0.1s' }}>
+            <p className="demo-vault-label">Vault balance</p>
+            <p className="demo-money-os-value">
+              200 <span>USDC</span>
+            </p>
+            <p className="demo-money-os-sub">0.00667 ETH · 0x5378…1f40</p>
+            <p className="demo-money-os-avail">190 USDC available</p>
+            <span className="demo-money-os-open">Open vault</span>
+          </div>
+          <DemoOsNode
+            className="is-b demo-pop"
+            style={{ '--d': '0.22s' }}
+            status="Live"
+            tone="is-on"
+            title="Income Split"
+            detail="20% to savings"
+          />
+          <DemoOsNode
+            className="is-c demo-pop"
+            style={{ '--d': '0.28s' }}
+            status="Paused"
+            tone=""
+            title="Spot strategy"
+            detail="Paper · 1 ETH"
+          />
+        </div>
+      </div>
+    </DemoFrame>
+  )
+}
+
+function DemoOsNode({ className = '', style, status, tone, title, detail }) {
+  return (
+    <div className={`demo-money-os-node ${className}`.trim()} style={style}>
+      <span className={`demo-money-os-pill ${tone}`}>
+        <span className={`status-dot ${tone || ''}`} />
+        {status}
+      </span>
+      <p className="demo-money-os-node-title">{title}</p>
+      <p className="demo-money-os-node-detail">{detail}</p>
+    </div>
+  )
+}
+
+/** Vault balances card demo (feature sections). */
 export function DemoVault() {
   const { ref, inView } = useInView({ once: false, threshold: 0.08 })
 

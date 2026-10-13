@@ -46,7 +46,6 @@ export function recordVaultBalanceSnapshot(vaultAddress, { usdc, eth }) {
   const stale = !last || now - Number(last.t) >= MIN_GAP_MS
 
   if (!changed && !stale) return
-  // Avoid duplicate identical samples within a short window
   if (last && !changed && now - Number(last.t) < MIN_GAP_MS) return
 
   prev.push({ t: now, usdc: u, eth: e })
@@ -100,42 +99,122 @@ function signedDelta(item, asset) {
   }
 }
 
-/** Prefer snapshots; fall back to history reconstruction; else flat current. */
+/** Prefer meaningful history; then snapshots; else a soft placeholder curve. */
 export function getBalanceSeries(vaultAddress, asset, { current, history } = {}) {
   const snaps = readRaw(vaultAddress)
   const key = String(asset || 'usdc').toLowerCase() === 'eth' ? 'eth' : 'usdc'
-  const fromSnaps = snaps.map((p) => Number(p[key])).filter(Number.isFinite)
+  const fromHist = seriesFromHistory(history, key === 'eth' ? 'ETH' : 'USDC', current)
+  if (fromHist.length >= 3) return downsample(fromHist, 24)
 
+  const fromSnaps = snaps.map((p) => Number(p[key])).filter(Number.isFinite)
   if (fromSnaps.length >= 2) return fromSnaps
 
-  const fromHist = seriesFromHistory(history, key === 'eth' ? 'ETH' : 'USDC', current)
   if (fromHist.length >= 2) return fromHist
 
   const c = Number(current)
-  if (!Number.isFinite(c)) return [0, 0]
-  // Gentle flat line so the spark always renders
-  return [c, c]
+  if (!Number.isFinite(c)) return [0, 0, 0]
+  // Soft placeholder so the chart never looks broken / empty
+  return placeholderSeries(c)
 }
 
-/** Build SVG path for a list of y values (0..n). */
-export function sparkPath(values, width = 120, height = 28, pad = 2) {
-  const nums = (values || []).map(Number).filter(Number.isFinite)
-  if (!nums.length) return ''
+function downsample(values, max) {
+  if (values.length <= max) return values
+  const out = []
+  const step = (values.length - 1) / (max - 1)
+  for (let i = 0; i < max; i++) {
+    out.push(values[Math.round(i * step)])
+  }
+  return out
+}
 
-  const min = Math.min(...nums)
-  const max = Math.max(...nums)
-  const span = max - min || 1
+function placeholderSeries(current) {
+  if (current <= 0) return [0, 0, 0, 0]
+  const base = current * 0.92
+  return [
+    base,
+    base * 1.02,
+    base * 0.98,
+    base * 1.04,
+    base * 1.01,
+    current,
+  ]
+}
+
+function toPoints(values, width, height, pad) {
+  const nums = (values || []).map(Number).filter(Number.isFinite)
+  if (!nums.length) return []
+
+  // Avoid zero-span flat lines looking broken — add tiny padding
+  let min = Math.min(...nums)
+  let max = Math.max(...nums)
+  if (max - min < 1e-12) {
+    const padY = Math.abs(max) * 0.04 || 1
+    min -= padY
+    max += padY
+  }
+  const span = max - min
   const n = nums.length
   const innerH = height - pad * 2
   const innerW = width - pad * 2
 
-  return nums
-    .map((v, i) => {
-      const x = pad + (n === 1 ? innerW / 2 : (i / (n - 1)) * innerW)
-      const y = pad + innerH - ((v - min) / span) * innerH
-      return `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`
-    })
-    .join(' ')
+  return nums.map((v, i) => ({
+    x: pad + (n === 1 ? innerW / 2 : (i / (n - 1)) * innerW),
+    y: pad + innerH - ((v - min) / span) * innerH,
+  }))
+}
+
+/** Smooth cubic path through points. */
+function smoothLine(points) {
+  if (!points.length) return ''
+  if (points.length === 1) {
+    return `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`
+  }
+  if (points.length === 2) {
+    return `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)} L ${points[1].x.toFixed(2)} ${points[1].y.toFixed(2)}`
+  }
+
+  let d = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i === 0 ? 0 : i - 1]
+    const p1 = points[i]
+    const p2 = points[i + 1]
+    const p3 = points[i + 2] || p2
+    const cp1x = p1.x + (p2.x - p0.x) / 6
+    const cp1y = p1.y + (p2.y - p0.y) / 6
+    const cp2x = p2.x - (p3.x - p1.x) / 6
+    const cp2y = p2.y - (p3.y - p1.y) / 6
+    d += ` C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)}, ${cp2x.toFixed(2)} ${cp2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`
+  }
+  return d
+}
+
+/**
+ * Geometry for a richer sparkline: smooth line, area fill, end dot.
+ */
+export function sparkGeometry(values, width = 160, height = 48, pad = 3) {
+  const points = toPoints(values, width, height, pad)
+  if (!points.length) {
+    return { line: '', area: '', end: null, width, height }
+  }
+
+  const line = smoothLine(points)
+  const last = points[points.length - 1]
+  const first = points[0]
+  const bottom = height - pad
+  const area = `${line} L ${last.x.toFixed(2)} ${bottom.toFixed(2)} L ${first.x.toFixed(2)} ${bottom.toFixed(2)} Z`
+
+  return {
+    line,
+    area,
+    end: { x: last.x, y: last.y },
+    width,
+    height,
+  }
+}
+
+/** @deprecated use sparkGeometry — kept for callers that only need a path */
+export function sparkPath(values, width = 120, height = 28, pad = 2) {
+  return sparkGeometry(values, width, height, pad).line
 }
 
 export function seriesDelta(values) {

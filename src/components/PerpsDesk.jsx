@@ -320,7 +320,7 @@ export function PerpsDesk({ address }) {
         </div>
         <div className="flex flex-wrap gap-2">
           <Link to="/app/new?type=perps" className="btn-outline text-sm">
-            New rule
+            New strategy
           </Link>
           <a
             href={HL_APP_URL}

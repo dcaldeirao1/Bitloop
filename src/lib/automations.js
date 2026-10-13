@@ -135,7 +135,9 @@ export function automationKind(action = {}, trigger = {}) {
     type === 'bridge_relay' ||
     trigger.type === 'every_interval' ||
     trigger.type === 'time_window' ||
-    trigger.type === 'usdc_above'
+    trigger.type === 'usdc_above' ||
+    trigger.type === 'eth_price_below' ||
+    trigger.type === 'eth_price_above'
   ) {
     return 'recurring'
   }

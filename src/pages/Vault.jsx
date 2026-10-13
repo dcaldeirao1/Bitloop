@@ -1,17 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ActivityList } from '../components/ActivityList'
 import { DashShell } from '../components/DashShell'
 import { NetworkBanner } from '../components/NetworkBanner'
-import { Sparkline } from '../components/Sparkline'
+import { BalanceCards } from '../components/BalanceCards'
 import { WalletButton } from '../components/WalletButton'
 import { useWallet } from '../context/WalletContext'
 import { getCachedVault, setCachedVault } from '../lib/automations'
-import {
-  getBalanceSeries,
-  recordVaultBalanceSnapshot,
-  seriesDelta,
-} from '../lib/balanceSeries'
+import { recordVaultBalanceSnapshot } from '../lib/balanceSeries'
 import { explorerTxUrl, fetchVaultHistory } from '../lib/history'
 import {
   SEPOLIA_USDC,
@@ -100,25 +96,6 @@ export function VaultPage() {
       setLoadingBalances(false)
     })
   }, [address, refresh])
-
-  const usdcSeries = useMemo(
-    () =>
-      getBalanceSeries(vault, 'usdc', {
-        current: balances?.vaultUsdcFormatted,
-        history,
-      }),
-    [vault, balances?.vaultUsdcFormatted, history],
-  )
-  const ethSeries = useMemo(
-    () =>
-      getBalanceSeries(vault, 'eth', {
-        current: balances?.vaultEthFormatted,
-        history,
-      }),
-    [vault, balances?.vaultEthFormatted, history],
-  )
-  const usdcDelta = seriesDelta(usdcSeries)
-  const ethDelta = seriesDelta(ethSeries)
 
   if (!address) {
     return (
@@ -254,16 +231,6 @@ export function VaultPage() {
     setTimeout(() => setCopied(false), 1500)
   }
 
-  const usdc = balances
-    ? trimAmt(balances.vaultUsdcFormatted)
-    : loadingBalances
-      ? '…'
-      : '—'
-  const eth = balances
-    ? trimAmt(balances.vaultEthFormatted, 5)
-    : loadingBalances
-      ? '…'
-      : '—'
   const walletUsdc = balances
     ? `${trimAmt(balances.walletUsdcFormatted)} USDC`
     : loadingBalances
@@ -367,47 +334,12 @@ export function VaultPage() {
             </section>
 
             <section className="vault-balance-panel mt-4">
-              <div className="vault-balance-grid">
-                <article className="vault-balance-card">
-                  <div className="vault-balance-head">
-                    <span className="vault-token is-usdc">$</span>
-                    <span>USDC</span>
-                  </div>
-                  <p className="vault-balance-amt">{usdc}</p>
-                  <p
-                    className={`vault-balance-delta ${
-                      usdcDelta > 0 ? 'is-up' : usdcDelta < 0 ? 'is-down' : ''
-                    }`}
-                  >
-                    {loadingBalances
-                      ? '…'
-                      : usdcDelta === 0
-                        ? 'No change in window'
-                        : `${usdcDelta > 0 ? '+' : ''}${trimAmt(usdcDelta)} window`}
-                  </p>
-                  <Sparkline values={usdcSeries} tone="teal" />
-                </article>
-
-                <article className="vault-balance-card">
-                  <div className="vault-balance-head">
-                    <span className="vault-token is-eth">Ξ</span>
-                    <span>ETH</span>
-                  </div>
-                  <p className="vault-balance-amt">{eth}</p>
-                  <p
-                    className={`vault-balance-delta ${
-                      ethDelta > 0 ? 'is-up' : ethDelta < 0 ? 'is-down' : ''
-                    }`}
-                  >
-                    {loadingBalances
-                      ? '…'
-                      : ethDelta === 0
-                        ? 'No change in window'
-                        : `${ethDelta > 0 ? '+' : ''}${trimAmt(ethDelta, 5)} window`}
-                  </p>
-                  <Sparkline values={ethSeries} tone="mango" />
-                </article>
-              </div>
+              <BalanceCards
+                vault={vault}
+                balances={balances}
+                loadingBalances={loadingBalances}
+                history={history}
+              />
 
               <p className="vault-balance-wallet">Wallet {walletUsdc}</p>
 
